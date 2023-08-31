@@ -300,13 +300,9 @@ func (table *Table) DeleteAll() error {
 // This must be always sync with BPF.h
 const BPF_MAX_STACK_DEPTH = 127
 
-func (table *Table) remove(key unsafe.Pointer) bool {
-	return C.bpf_delete_elem(table.fd, key) >= 0
-}
-
 func (table *Table) ClearStackId(stackId int) {
 	if stackId > 0 {
-		table.remove(unsafe.Pointer(&stackId))
+		table.Remove(unsafe.Pointer(&stackId))
 	}
 }
 
@@ -325,7 +321,7 @@ func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
 		res = append(res, uintptr(stack.ip[i]))
 	}
 	if clear {
-		table.remove(unsafe.Pointer(&stackId))
+		table.Remove(unsafe.Pointer(&stackId))
 	}
 	return res
 }
@@ -354,6 +350,22 @@ func (table *Table) GetAddrSymbol(addr uintptr, pid int) string {
 
 func (table *Table) Lookup(key, value unsafe.Pointer) bool {
 	return C.bpf_lookup_elem(table.fd, key, value) >= 0
+}
+
+func (table *Table) Remove(key unsafe.Pointer) bool {
+	return C.bpf_delete_elem(table.fd, key) >= 0
+}
+
+func (table *Table) Update(key, value unsafe.Pointer) bool {
+	return C.bpf_update_elem(table.fd, key, value, 0) >= 0
+}
+
+func (table *Table) Next(key, nextKey unsafe.Pointer) bool {
+	return C.bpf_get_next_key(table.fd, key, nextKey) >= 0
+}
+
+func (table *Table) First(key unsafe.Pointer) bool {
+	return C.bpf_get_first_key(table.fd, key, C.bpf_table_key_size_id(table.module.p, table.id)) >= 0
 }
 
 // TableIterator contains the current position for iteration over a *bcc.Table and provides methods for iteration.
