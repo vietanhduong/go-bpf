@@ -304,6 +304,12 @@ func (table *Table) remove(key unsafe.Pointer) bool {
 	return C.bpf_delete_elem(table.fd, key) >= 0
 }
 
+func (table *Table) ClearStackId(stackId int) {
+	if stackId > 0 {
+		table.remove(unsafe.Pointer(&stackId))
+	}
+}
+
 func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
 	if stackId < 0 {
 		return nil
