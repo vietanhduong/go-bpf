@@ -17,6 +17,7 @@ package bcc
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -50,12 +51,17 @@ type callbackData struct {
 }
 
 // BPF_PERF_READER_PAGE_CNT is the default page_cnt used per cpu ring buffer
-const BPF_PERF_READER_PAGE_CNT = 8
+const (
+	BPF_PERF_READER_PAGE_CNT = 8
+	BPF_PERF_BUF_SIZE        = 1024 * 1024
+)
 
-var byteOrder binary.ByteOrder
-var callbackRegister = make(map[uint64]*callbackData)
-var callbackIndex uint64
-var mu sync.Mutex
+var (
+	byteOrder        binary.ByteOrder
+	callbackRegister = make(map[uint64]*callbackData)
+	callbackIndex    uint64
+	mu               sync.Mutex
+)
 
 // In lack of binary.HostEndian ...
 func init() {
@@ -88,6 +94,7 @@ func lookupCallback(i uint64) *callbackData {
 // be written. This is because we can't take the address of a Go
 // function and give that to C-code since the cgo tool will generate a
 // stub in C that should be called."
+//
 //export rawCallback
 func rawCallback(cbCookie unsafe.Pointer, raw unsafe.Pointer, rawSize C.int) {
 	callbackData := lookupCallback(uint64(uintptr(cbCookie)))
@@ -121,7 +128,8 @@ func determineHostByteOrder() binary.ByteOrder {
 
 // InitPerfMap initializes a perf map with a receiver channel, with a default page_cnt.
 func InitPerfMap(table *Table, receiverChan chan []byte, lostChan chan uint64) (*PerfMap, error) {
-	return InitPerfMapWithPageCnt(table, receiverChan, lostChan, BPF_PERF_READER_PAGE_CNT)
+	numPages := intRoudUpToPow2(intRoundUpAndDivide(BPF_PERF_BUF_SIZE, os.Getpagesize()))
+	return InitPerfMapWithPageCnt(table, receiverChan, lostChan, numPages)
 }
 
 // InitPerfMapWithPageCnt initializes a perf map with a receiver channel with a specified page_cnt.
@@ -190,7 +198,7 @@ func (pm *PerfMap) Start() {
 // have a way to cancel the poll, but perf_reader_poll doesn't
 // support that yet.
 func (pm *PerfMap) Stop() {
-	pm.stop <- true
+	close(pm.stop)
 }
 
 func (pm *PerfMap) poll(timeout int) {
@@ -219,4 +227,16 @@ func bpfOpenPerfBuffer(cpu uint, callbackDataIndex uint64, pageCnt int) (unsafe.
 		return nil, fmt.Errorf("failed to open perf buffer: %v", err)
 	}
 	return reader, nil
+}
+
+func intRoundUpAndDivide(x, y int) int {
+	return (x + (y - 1)) / y
+}
+
+func intRoudUpToPow2(x int) int {
+	var power int = 1
+	for power < x {
+		power *= 2
+	}
+	return power
 }

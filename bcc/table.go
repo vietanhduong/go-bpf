@@ -25,11 +25,19 @@ import (
 )
 
 /*
-#cgo CFLAGS: -I/usr/include/bcc/compat
+#cgo CFLAGS: -I/usr/include/bcc
 #cgo LDFLAGS: -lbcc
-#include <linux/bpf.h>
+
 #include <bcc/bcc_common.h>
 #include <bcc/libbpf.h>
+#include <bcc/bcc_syms.h>
+#include <linux/bpf.h>
+#include <linux/elf.h>
+
+struct stacktrace_t {
+  uintptr_t ip[127];
+};
+
 */
 import "C"
 
@@ -37,8 +45,11 @@ var errIterationFailed = errors.New("table.Iter: leaf for next key not found")
 
 // Table references a BPF table.  The zero value cannot be used.
 type Table struct {
-	id     C.size_t
-	module *Module
+	id        C.size_t
+	fd        C.int
+	module    *Module
+	pidSym    map[int]unsafe.Pointer
+	symbolOpt C.struct_bcc_symbol_option
 }
 
 // New tables returns a refernce to a BPF table.
@@ -46,7 +57,22 @@ func NewTable(id C.size_t, module *Module) *Table {
 	return &Table{
 		id:     id,
 		module: module,
+		fd:     C.bpf_table_fd_id(module.p, id),
+		pidSym: make(map[int]unsafe.Pointer),
+		symbolOpt: C.struct_bcc_symbol_option{
+			use_debug_file:       1,
+			check_debug_file_crc: 1,
+			lazy_symbolize:       1,
+			use_symbol_type:      (1 << C.STT_FUNC) | (1 << C.STT_GNU_IFUNC),
+		},
 	}
+}
+
+func (table *Table) UpdateSymbolOptions(useDebugFile, checkDebugFileCrc, lazySymbolize bool, useSymbolType int) {
+	table.symbolOpt.use_debug_file = C.int(boolToInt(useDebugFile))
+	table.symbolOpt.check_debug_file_crc = C.int(boolToInt(checkDebugFileCrc))
+	table.symbolOpt.lazy_symbolize = C.int(boolToInt(lazySymbolize))
+	table.symbolOpt.use_symbol_type = C.uint(useSymbolType)
 }
 
 // ID returns the table id.
@@ -270,6 +296,61 @@ func (table *Table) DeleteAll() error {
 	return nil
 }
 
+// From src/cc/export/helpers.h
+// This must be always sync with BPF.h
+const BPF_MAX_STACK_DEPTH = 127
+
+func (table *Table) remove(key unsafe.Pointer) bool {
+	return C.bpf_delete_elem(table.fd, key) >= 0
+}
+
+func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
+	if stackId < 0 {
+		return nil
+	}
+
+	var res []uintptr
+	stack := &C.struct_stacktrace_t{}
+
+	if !table.lookup(unsafe.Pointer(&stackId), unsafe.Pointer(stack)) {
+		return res
+	}
+	for i := 0; (i < BPF_MAX_STACK_DEPTH) && (stack.ip[i] != 0); i++ {
+		res = append(res, uintptr(stack.ip[i]))
+	}
+	if clear {
+		table.remove(unsafe.Pointer(&stackId))
+	}
+	return res
+}
+
+func (table *Table) GetAddrSymbol(addr uintptr, pid int) string {
+	if pid < 0 {
+		pid = -1
+	}
+	cache, ok := table.pidSym[pid]
+	if !ok {
+		cache = C.bcc_symcache_new(C.int(pid), &table.symbolOpt)
+		table.pidSym[pid] = cache
+	}
+
+	var sym C.struct_bcc_symbol
+	var s string
+	ret := C.bcc_symcache_resolve(cache, C.uint64_t(addr), &sym)
+	if ret < 0 {
+		s = "[UNKNOWN]"
+	} else {
+		s = C.GoString(sym.demangle_name)
+		C.bcc_symbol_free_demangle_name(&sym)
+	}
+	return s
+}
+
+func (table *Table) lookup(key, value unsafe.Pointer) bool {
+	fd := C.bpf_table_fd_id(table.module.p, table.id)
+	return C.bpf_lookup_elem(C.int(fd), key, value) >= 0
+}
+
 // TableIterator contains the current position for iteration over a *bcc.Table and provides methods for iteration.
 type TableIterator struct {
 	table *Table
@@ -362,4 +443,11 @@ func (it *TableIterator) Leaf() []byte {
 // Err returns the last error that ocurred while table.Iter oder iter.Next
 func (it *TableIterator) Err() error {
 	return it.err
+}
+
+func boolToInt(val bool) int {
+	if val {
+		return 1
+	}
+	return 0
 }
