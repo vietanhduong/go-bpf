@@ -312,11 +312,14 @@ func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
 	}
 
 	var res []uintptr
-	stack := &C.struct_stacktrace_t{}
 
-	if !table.Lookup(unsafe.Pointer(&stackId), unsafe.Pointer(stack)) {
+	ptr, err := table.GetP(unsafe.Pointer(&stackId))
+	if err != nil {
 		return res
 	}
+
+	stack := (*C.struct_stacktrace_t)(ptr)
+
 	for i := 0; (i < BPF_MAX_STACK_DEPTH) && (stack.ip[i] != 0); i++ {
 		res = append(res, uintptr(stack.ip[i]))
 	}
@@ -348,20 +351,24 @@ func (table *Table) GetAddrSymbol(addr uintptr, pid int) string {
 	return s
 }
 
-func (table *Table) Lookup(key, value unsafe.Pointer) bool {
-	return C.bpf_lookup_elem(table.fd, key, value) >= 0
+func (table *Table) Lookup(key, value unsafe.Pointer) error {
+	_, err := C.bpf_lookup_elem(table.fd, key, value)
+	return err
 }
 
-func (table *Table) Remove(key unsafe.Pointer) bool {
-	return C.bpf_delete_elem(table.fd, key) >= 0
+func (table *Table) Remove(key unsafe.Pointer) error {
+	_, err := C.bpf_delete_elem(table.fd, key)
+	return err
 }
 
-func (table *Table) Update(key, value unsafe.Pointer) bool {
-	return C.bpf_update_elem(table.fd, key, value, 0) >= 0
+func (table *Table) Update(key, value unsafe.Pointer) error {
+	_, err := C.bpf_update_elem(table.fd, key, value, 0)
+	return err
 }
 
-func (table *Table) Next(key, nextKey unsafe.Pointer) bool {
-	return C.bpf_get_next_key(table.fd, key, nextKey) >= 0
+func (table *Table) Next(key, nextKey unsafe.Pointer) error {
+	_, err := C.bpf_get_next_key(table.fd, key, nextKey)
+	return err
 }
 
 func (table *Table) First(key unsafe.Pointer) bool {
