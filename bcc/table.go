@@ -318,7 +318,7 @@ func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
 	var res []uintptr
 	stack := &C.struct_stacktrace_t{}
 
-	if !table.lookup(unsafe.Pointer(&stackId), unsafe.Pointer(stack)) {
+	if !table.Lookup(unsafe.Pointer(&stackId), unsafe.Pointer(stack)) {
 		return res
 	}
 	for i := 0; (i < BPF_MAX_STACK_DEPTH) && (stack.ip[i] != 0); i++ {
@@ -352,9 +352,8 @@ func (table *Table) GetAddrSymbol(addr uintptr, pid int) string {
 	return s
 }
 
-func (table *Table) lookup(key, value unsafe.Pointer) bool {
-	fd := C.bpf_table_fd_id(table.module.p, table.id)
-	return C.bpf_lookup_elem(C.int(fd), key, value) >= 0
+func (table *Table) Lookup(key, value unsafe.Pointer) bool {
+	return C.bpf_lookup_elem(table.fd, key, value) >= 0
 }
 
 // TableIterator contains the current position for iteration over a *bcc.Table and provides methods for iteration.
