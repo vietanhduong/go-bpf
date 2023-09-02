@@ -52,6 +52,16 @@ type Table struct {
 	symbolOpt C.struct_bcc_symbol_option
 }
 
+type Config struct {
+	Name     string
+	FD       int
+	KeySize  uint64
+	LeafSize uint64
+	KeyDesc  string
+	LeafDesc string
+	Capacity int
+}
+
 // New tables returns a refernce to a BPF table.
 func NewTable(id C.size_t, module *Module) *Table {
 	return &Table{
@@ -76,8 +86,8 @@ func (table *Table) UpdateSymbolOptions(useDebugFile, checkDebugFileCrc, lazySym
 }
 
 // ID returns the table id.
-func (table *Table) ID() string {
-	return C.GoString(C.bpf_table_name(table.module.p, table.id))
+func (table *Table) ID() int {
+	return int(table.id)
 }
 
 // Name returns the table name.
@@ -86,15 +96,16 @@ func (table *Table) Name() string {
 }
 
 // Config returns the table properties (name, fd, ...).
-func (table *Table) Config() map[string]interface{} {
+func (table *Table) Config() *Config {
 	mod := table.module.p
-	return map[string]interface{}{
-		"name":      C.GoString(C.bpf_table_name(mod, table.id)),
-		"fd":        int(C.bpf_table_fd_id(mod, table.id)),
-		"key_size":  uint64(C.bpf_table_key_size_id(mod, table.id)),
-		"leaf_size": uint64(C.bpf_table_leaf_size_id(mod, table.id)),
-		"key_desc":  C.GoString(C.bpf_table_key_desc_id(mod, table.id)),
-		"leaf_desc": C.GoString(C.bpf_table_leaf_desc_id(mod, table.id)),
+	return &Config{
+		Name:     C.GoString(C.bpf_table_name(mod, table.id)),
+		FD:       int(C.bpf_table_fd_id(mod, table.id)),
+		KeySize:  uint64(C.bpf_table_key_size_id(mod, table.id)),
+		LeafSize: uint64(C.bpf_table_leaf_size_id(mod, table.id)),
+		KeyDesc:  C.GoString(C.bpf_table_key_desc_id(mod, table.id)),
+		LeafDesc: C.GoString(C.bpf_table_leaf_desc_id(mod, table.id)),
+		Capacity: int(C.bpf_table_max_entries_id(mod, table.id)),
 	}
 }
 

@@ -134,11 +134,8 @@ func InitPerfMap(table *Table, receiverChan chan []byte, lostChan chan uint64) (
 
 // InitPerfMapWithPageCnt initializes a perf map with a receiver channel with a specified page_cnt.
 func InitPerfMapWithPageCnt(table *Table, receiverChan chan []byte, lostChan chan uint64, pageCnt int) (*PerfMap, error) {
-	fd := table.Config()["fd"].(int)
-	keySize := table.Config()["key_size"].(uint64)
-	leafSize := table.Config()["leaf_size"].(uint64)
-
-	if keySize != 4 || leafSize != 4 {
+	cfg := table.Config()
+	if cfg.KeySize != 4 || cfg.LeafSize != 4 {
 		return nil, fmt.Errorf("passed table has wrong size")
 	}
 
@@ -147,8 +144,8 @@ func InitPerfMapWithPageCnt(table *Table, receiverChan chan []byte, lostChan cha
 		lostChan,
 	})
 
-	key := make([]byte, keySize)
-	leaf := make([]byte, leafSize)
+	key := make([]byte, cfg.KeySize)
+	leaf := make([]byte, cfg.LeafSize)
 	keyP := unsafe.Pointer(&key[0])
 	leafP := unsafe.Pointer(&leaf[0])
 
@@ -171,11 +168,11 @@ func InitPerfMapWithPageCnt(table *Table, receiverChan chan []byte, lostChan cha
 
 		byteOrder.PutUint32(leaf, uint32(perfFd))
 
-		r, err := C.bpf_update_elem(C.int(fd), keyP, leafP, 0)
+		r, err := C.bpf_update_elem(C.int(table.fd), keyP, leafP, 0)
 		if r != 0 {
 			return nil, fmt.Errorf("unable to initialize perf map: %v", err)
 		}
-		r = C.bpf_get_next_key(C.int(fd), keyP, keyP)
+		r = C.bpf_get_next_key(C.int(table.fd), keyP, keyP)
 		if r != 0 {
 			break
 		}
