@@ -67,6 +67,13 @@ func (s *Symbolizer) SymbolOrAddrIfUnknown(pid int, addr uintptr) string {
 	return s.formatAddress(addr)
 }
 
+func (s *Symbolizer) ReleasePidSymCache(pid int) {
+	if cache, ok := s.bccSymbolCache[pid]; ok {
+		C.bcc_free_symcache(cache, C.int(pid))
+		delete(s.bccSymbolCache, pid)
+	}
+}
+
 func (s *Symbolizer) getBCCSymbolCache(pid int) unsafe.Pointer {
 	cache, ok := s.bccSymbolCache[pid]
 	if ok {
