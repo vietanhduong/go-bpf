@@ -9,6 +9,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/iovisor/gobpf/bcc"
 	bpf "github.com/iovisor/gobpf/bcc"
 )
 
@@ -125,6 +126,8 @@ func main() {
 	log.Printf("preparing to aggregate stack...")
 
 	stackTable := bpf.NewTable(m.TableId("stack_traces"), m)
+	bccSym := bcc.NewSymbolizer()
+
 	all := make(map[string]int)
 	for stack, count := range stacks {
 		if stack.pid != C.uint32_t(pid) {
@@ -136,7 +139,7 @@ func main() {
 			v += count
 			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
 			for _, addr := range addrs {
-				symbols = append(symbols, stackTable.GetAddrSymbol(addr, pid))
+				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(pid, addr))
 			}
 		}
 
@@ -144,7 +147,7 @@ func main() {
 			v += count
 			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
 			for _, addr := range addrs {
-				symbols = append(symbols, stackTable.GetAddrSymbol(addr, pid))
+				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(-1, addr))
 			}
 		}
 

@@ -27,9 +27,65 @@ import (
 #include <bcc/bcc_common.h>
 #include <bcc/libbpf.h>
 #include <bcc/bcc_syms.h>
+#include <linux/bpf.h>
+#include <linux/elf.h>
+
 extern void foreach_symbol_callback(char*, uint64_t);
 */
 import "C"
+
+type Symbolizer struct {
+	bccSymbolCache  map[int]unsafe.Pointer
+	bccSymbolOpt    C.struct_bcc_symbol_option
+	bccSymbolStruct C.struct_bcc_symbol
+}
+
+func NewSymbolizer() *Symbolizer {
+	return &Symbolizer{
+		bccSymbolCache: make(map[int]unsafe.Pointer),
+		bccSymbolOpt: C.struct_bcc_symbol_option{
+			use_debug_file:       C.int(boolToInt(false)),
+			check_debug_file_crc: C.int(boolToInt(false)),
+			lazy_symbolize:       C.int(boolToInt(true)),
+			use_symbol_type:      (1 << C.STT_FUNC) | (1 << C.STT_GNU_IFUNC),
+		},
+	}
+}
+
+func (s *Symbolizer) SymbolOrAddrIfUnknown(pid int, addr uintptr) string {
+	cache := s.getBCCSymbolCache(pid)
+	resolved := C.bcc_symcache_resolve(cache, C.uint64_t(addr), &s.bccSymbolStruct)
+	if resolved == 0 {
+		symbol := s.bccSymbolStruct.demangle_name
+		C.bcc_symbol_free_demangle_name(&s.bccSymbolStruct)
+		return C.GoString(symbol)
+	}
+
+	if module := C.GoString(s.bccSymbolStruct.module); module != "" {
+		return s.formatModuleName(C.GoString(s.bccSymbolStruct.module), uintptr(s.bccSymbolStruct.offset))
+	}
+	return s.formatAddress(addr)
+}
+
+func (s *Symbolizer) getBCCSymbolCache(pid int) unsafe.Pointer {
+	cache, ok := s.bccSymbolCache[pid]
+	if ok {
+		return cache
+	}
+
+	symbol := (*C.struct_bcc_symbol_option)(unsafe.Pointer(&s.bccSymbolOpt))
+	cache = C.bcc_symcache_new(C.int(pid), symbol)
+	s.bccSymbolCache[pid] = cache
+	return cache
+}
+
+func (s *Symbolizer) formatAddress(addr uintptr) string {
+	return fmt.Sprintf("0x%016x", addr)
+}
+
+func (s *Symbolizer) formatModuleName(module string, offset uintptr) string {
+	return fmt.Sprintf("[m] %s + 0x%08x", module, offset)
+}
 
 type symbolAddress struct {
 	name string
