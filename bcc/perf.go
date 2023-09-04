@@ -210,6 +210,10 @@ func (pm *PerfMap) poll(timeout int) {
 	}
 }
 
+func (pm *PerfMap) Poll(timeout int) {
+	C.perf_reader_poll(C.int(len(pm.readers)), &pm.readers[0], C.int(timeout))
+}
+
 func bpfOpenPerfBuffer(cpu uint, callbackDataIndex uint64, pageCnt int) (unsafe.Pointer, error) {
 	if (pageCnt & (pageCnt - 1)) != 0 {
 		return nil, fmt.Errorf("pageCnt must be a power of 2: %d", pageCnt)
