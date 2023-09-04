@@ -22,7 +22,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"time"
 	"unsafe"
 
 	bpf "github.com/iovisor/gobpf/bcc"
@@ -320,7 +319,7 @@ func run() {
 		}
 	}()
 
-	perfMap.Start(500 * time.Millisecond)
+	perfMap.Start(500)
 	<-sig
 	perfMap.Stop()
 }

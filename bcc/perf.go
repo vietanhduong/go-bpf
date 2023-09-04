@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 	"unsafe"
 
 	"github.com/iovisor/gobpf/pkg/cpuonline"
@@ -37,6 +36,7 @@ import (
 extern void rawCallback(void*, void*, int);
 // typedef void (*perf_reader_lost_cb)(void *cb_cookie, uint64_t lost);
 extern void lostCallback(void*, uint64_t);
+
 */
 import "C"
 
@@ -44,6 +44,7 @@ type PerfMap struct {
 	table   *Table
 	readers []*C.struct_perf_reader
 	stop    chan bool
+	epfd    C.int
 }
 
 type callbackData struct {
@@ -179,19 +180,19 @@ func InitPerfMapWithPageCnt(table *Table, receiverChan chan []byte, lostChan cha
 		}
 	}
 	return &PerfMap{
-		table,
-		readers,
-		make(chan bool),
+		table:   table,
+		readers: readers,
+		stop:    make(chan bool, 1),
 	}, nil
 }
 
 // Start to poll the perf map reader and send back event data
 // over the connected channel.
-func (pm *PerfMap) Start(timeout time.Duration) {
-	go pm.poll(int(timeout.Milliseconds()))
+func (pm *PerfMap) Start(timeout int) {
+	go pm.poll(timeout)
 }
 
-// Stop to poll the perf map readers after a maximum of 500ms
+// Stop to poll the perf map readers after a maximum of timeout (ms)
 // (the timeout we use for perf_reader_poll). Ideally we would
 // have a way to cancel the poll, but perf_reader_poll doesn't
 // support that yet.
@@ -210,10 +211,6 @@ func (pm *PerfMap) poll(timeout int) {
 	}
 }
 
-func (pm *PerfMap) Poll(timeout int) {
-	C.perf_reader_poll(C.int(len(pm.readers)), &pm.readers[0], C.int(timeout))
-}
-
 func bpfOpenPerfBuffer(cpu uint, callbackDataIndex uint64, pageCnt int) (unsafe.Pointer, error) {
 	if (pageCnt & (pageCnt - 1)) != 0 {
 		return nil, fmt.Errorf("pageCnt must be a power of 2: %d", pageCnt)
@@ -228,6 +225,7 @@ func bpfOpenPerfBuffer(cpu uint, callbackDataIndex uint64, pageCnt int) (unsafe.
 	if reader == nil {
 		return nil, fmt.Errorf("failed to open perf buffer: %v", err)
 	}
+
 	return reader, nil
 }
 

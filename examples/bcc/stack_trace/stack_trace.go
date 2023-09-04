@@ -109,26 +109,17 @@ func main() {
 		}
 		stacks := make(map[C.struct_key_t]int)
 		done := time.After(time.Duration(sleep) * time.Second)
-		go func() {
-			for {
-				select {
-				case <-done:
-					return
-				default:
-				}
-				perfMap.Poll(0)
-			}
-		}()
-
+		perfMap.Start(0)
+		defer perfMap.Stop()
 		for {
 			select {
 			case <-done:
+				log.Printf("DONE")
 				return stacks
-			default:
+			case data := <-channel:
+				event := (*C.struct_key_t)(unsafe.Pointer(&data[0]))
+				stacks[*event]++
 			}
-			data := <-channel
-			event := (*C.struct_key_t)(unsafe.Pointer(&data[0]))
-			stacks[*event]++
 		}
 	}
 	stacks := aggregate()
