@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 
 	bpf "github.com/iovisor/gobpf/bcc"
@@ -248,7 +249,6 @@ func run() {
 
 			var event execveEvent
 			err := binary.Read(bytes.NewBuffer(data), bpf.GetHostByteOrder(), &event)
-
 			if err != nil {
 				fmt.Printf("failed to decode received data: %s\n", err)
 				continue
@@ -320,7 +320,7 @@ func run() {
 		}
 	}()
 
-	perfMap.Start()
+	perfMap.Start(500 * time.Millisecond)
 	<-sig
 	perfMap.Stop()
 }

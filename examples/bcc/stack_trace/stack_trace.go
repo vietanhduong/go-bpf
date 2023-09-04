@@ -108,7 +108,7 @@ func main() {
 			os.Exit(1)
 		}
 		stacks := make(map[C.struct_key_t]int)
-		perfMap.Start()
+		perfMap.Start(500 * time.Millisecond)
 		done := time.After(time.Duration(sleep) * time.Second)
 		for {
 			select {

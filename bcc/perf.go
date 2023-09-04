@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/iovisor/gobpf/pkg/cpuonline"
@@ -186,8 +187,8 @@ func InitPerfMapWithPageCnt(table *Table, receiverChan chan []byte, lostChan cha
 
 // Start to poll the perf map reader and send back event data
 // over the connected channel.
-func (pm *PerfMap) Start() {
-	go pm.poll(500)
+func (pm *PerfMap) Start(timeout time.Duration) {
+	go pm.poll(int(timeout.Milliseconds()))
 }
 
 // Stop to poll the perf map readers after a maximum of 500ms
@@ -195,7 +196,7 @@ func (pm *PerfMap) Start() {
 // have a way to cancel the poll, but perf_reader_poll doesn't
 // support that yet.
 func (pm *PerfMap) Stop() {
-	close(pm.stop)
+	pm.stop <- true
 }
 
 func (pm *PerfMap) poll(timeout int) {

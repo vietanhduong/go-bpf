@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	bpf "github.com/iovisor/gobpf/bcc"
 )
@@ -98,7 +99,7 @@ func main() {
 		}
 	}()
 
-	perfMap.Start()
+	perfMap.Start(500 * time.Millisecond)
 	<-sig
 	perfMap.Stop()
 }
