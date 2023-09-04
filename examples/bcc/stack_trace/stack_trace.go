@@ -108,12 +108,21 @@ func main() {
 			os.Exit(1)
 		}
 		stacks := make(map[C.struct_key_t]int)
-		perfMap.Start(500 * time.Millisecond)
 		done := time.After(time.Duration(sleep) * time.Second)
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				perfMap.Poll(0)
+			}
+		}()
+
 		for {
 			select {
 			case <-done:
-				perfMap.Stop()
 				return stacks
 			default:
 			}
