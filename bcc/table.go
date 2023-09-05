@@ -54,7 +54,7 @@ type Table struct {
 
 type Config struct {
 	Name     string
-	FD       int
+	Fd       int
 	KeySize  uint64
 	LeafSize uint64
 	KeyDesc  string
@@ -100,7 +100,7 @@ func (table *Table) Config() *Config {
 	mod := table.module.p
 	return &Config{
 		Name:     C.GoString(C.bpf_table_name(mod, table.id)),
-		FD:       int(C.bpf_table_fd_id(mod, table.id)),
+		Fd:       int(C.bpf_table_fd_id(mod, table.id)),
 		KeySize:  uint64(C.bpf_table_key_size_id(mod, table.id)),
 		LeafSize: uint64(C.bpf_table_leaf_size_id(mod, table.id)),
 		KeyDesc:  C.GoString(C.bpf_table_key_desc_id(mod, table.id)),

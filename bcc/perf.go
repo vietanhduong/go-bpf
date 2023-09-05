@@ -1,24 +1,9 @@
-// Copyright 2016 Kinvolk
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package bcc
 
 import (
-	"encoding/binary"
 	"fmt"
-	"os"
-	"sync"
+	"log"
+	"time"
 	"unsafe"
 
 	"github.com/iovisor/gobpf/pkg/cpuonline"
@@ -28,8 +13,11 @@ import (
 #cgo CFLAGS: -I/usr/include/bcc/compat
 #cgo LDFLAGS: -lbcc
 #include <bcc/bcc_common.h>
+#include <unistd.h>
+#include <sys/epoll.h>
 #include <bcc/libbpf.h>
 #include <bcc/perf_reader.h>
+
 
 // perf_reader_raw_cb and perf_reader_lost_cb as defined in bcc libbpf.h
 // typedef void (*perf_reader_raw_cb)(void *cb_cookie, void *raw, int raw_size);
@@ -37,206 +25,171 @@ extern void rawCallback(void*, void*, int);
 // typedef void (*perf_reader_lost_cb)(void *cb_cookie, uint64_t lost);
 extern void lostCallback(void*, uint64_t);
 
+struct epoll_event create_ptr_event(int event_type, void* ptr) {
+  struct epoll_event event = {};
+  event.events = event_type;
+  event.data.ptr = ptr;
+  return event;
+}
+
+void* get_event_data_ptr(struct epoll_event event) {
+  return event.data.ptr;
+}
 */
 import "C"
 
-type PerfMap struct {
-	table   *Table
-	readers []*C.struct_perf_reader
-	stop    chan bool
-	epfd    C.int
+type PerfBuffer struct {
+	table    *Table
+	epfd     C.int
+	readers  map[int]*C.struct_perf_reader
+	cbIdx    uint64
+	epEvents []C.struct_epoll_event
 }
 
-type callbackData struct {
-	receiverChan chan []byte
-	lostChan     chan uint64
-}
-
-// BPF_PERF_READER_PAGE_CNT is the default page_cnt used per cpu ring buffer
-const (
-	BPF_PERF_READER_PAGE_CNT = 8
-	BPF_PERF_BUF_SIZE        = 1024 * 1024
-)
-
-var (
-	byteOrder        binary.ByteOrder
-	callbackRegister = make(map[uint64]*callbackData)
-	callbackIndex    uint64
-	mu               sync.Mutex
-)
-
-// In lack of binary.HostEndian ...
-func init() {
-	byteOrder = determineHostByteOrder()
-}
-
-func registerCallback(data *callbackData) uint64 {
-	mu.Lock()
-	defer mu.Unlock()
-	callbackIndex++
-	for callbackRegister[callbackIndex] != nil {
-		callbackIndex++
-	}
-	callbackRegister[callbackIndex] = data
-	return callbackIndex
-}
-
-func unregisterCallback(i uint64) {
-	mu.Lock()
-	defer mu.Unlock()
-	delete(callbackRegister, i)
-}
-
-func lookupCallback(i uint64) *callbackData {
-	return callbackRegister[i]
-}
-
-// Gateway function as required with CGO Go >= 1.6
-// "If a C-program wants a function pointer, a gateway function has to
-// be written. This is because we can't take the address of a Go
-// function and give that to C-code since the cgo tool will generate a
-// stub in C that should be called."
-//
-//export rawCallback
-func rawCallback(cbCookie unsafe.Pointer, raw unsafe.Pointer, rawSize C.int) {
-	callbackData := lookupCallback(uint64(uintptr(cbCookie)))
-	callbackData.receiverChan <- C.GoBytes(raw, rawSize)
-}
-
-//export lostCallback
-func lostCallback(cbCookie unsafe.Pointer, lost C.uint64_t) {
-	callbackData := lookupCallback(uint64(uintptr(cbCookie)))
-	if callbackData.lostChan != nil {
-		callbackData.lostChan <- uint64(lost)
+func CreatePerfBuffer(table *Table) *PerfBuffer {
+	return &PerfBuffer{
+		table:   table,
+		epfd:    -1,
+		cbIdx:   0,
+		readers: make(map[int]*C.struct_perf_reader),
 	}
 }
 
-// GetHostByteOrder returns the current byte-order.
-func GetHostByteOrder() binary.ByteOrder {
-	return byteOrder
+func (perf *PerfBuffer) Close() error {
+	return perf.CloseAllCpu()
 }
 
-func determineHostByteOrder() binary.ByteOrder {
-	var i int32 = 0x01020304
-	u := unsafe.Pointer(&i)
-	pb := (*byte)(u)
-	b := *pb
-	if b == 0x04 {
-		return binary.LittleEndian
+func (perf *PerfBuffer) OpenAllCpu(recv ReceiveCallback, lost LostCallback, pageCnt int) error {
+	if len(perf.readers) != 0 || perf.epfd != -1 {
+		return fmt.Errorf("perviously opened perf buffer not cleaned")
 	}
-
-	return binary.BigEndian
-}
-
-// InitPerfMap initializes a perf map with a receiver channel, with a default page_cnt.
-func InitPerfMap(table *Table, receiverChan chan []byte, lostChan chan uint64) (*PerfMap, error) {
-	numPages := intRoudUpToPow2(intRoundUpAndDivide(BPF_PERF_BUF_SIZE, os.Getpagesize()))
-	return InitPerfMapWithPageCnt(table, receiverChan, lostChan, numPages)
-}
-
-// InitPerfMapWithPageCnt initializes a perf map with a receiver channel with a specified page_cnt.
-func InitPerfMapWithPageCnt(table *Table, receiverChan chan []byte, lostChan chan uint64, pageCnt int) (*PerfMap, error) {
-	cfg := table.Config()
-	if cfg.KeySize != 4 || cfg.LeafSize != 4 {
-		return nil, fmt.Errorf("passed table has wrong size")
-	}
-
-	callbackDataIndex := registerCallback(&callbackData{
-		receiverChan,
-		lostChan,
-	})
-
-	key := make([]byte, cfg.KeySize)
-	leaf := make([]byte, cfg.LeafSize)
-	keyP := unsafe.Pointer(&key[0])
-	leafP := unsafe.Pointer(&leaf[0])
-
-	readers := []*C.struct_perf_reader{}
 
 	cpus, err := cpuonline.Get()
 	if err != nil {
-		return nil, fmt.Errorf("failed to determine online cpus: %v", err)
+		return fmt.Errorf("get online cpu: %v", err)
 	}
+
+	perf.epEvents = make([]C.struct_epoll_event, len(cpus))
+	perf.epfd = C.epoll_create1(C.EPOLL_CLOEXEC)
+
+	perf.cbIdx = registerCallback(&callbackData{
+		recvFn: recv,
+		lostFn: lost,
+	})
 
 	for _, cpu := range cpus {
-		reader, err := bpfOpenPerfBuffer(cpu, callbackDataIndex, pageCnt)
+		opts := C.struct_bcc_perf_buffer_opts{
+			pid:           -1,
+			cpu:           C.int(cpu),
+			wakeup_events: 1,
+		}
+
+		if err := perf.openOnCpu(recv, lost, pageCnt, opts); err != nil {
+			_ = perf.CloseAllCpu()
+			return err
+		}
+	}
+	return nil
+}
+
+func (perf *PerfBuffer) CloseAllCpu() error {
+	var errStr string
+	if int(perf.epfd) >= 0 {
+		_, err := C.close(perf.epfd)
+		perf.epfd = -1
+		perf.epEvents = perf.epEvents[:0]
 		if err != nil {
-			return nil, fmt.Errorf("failed to open perf buffer: %v", err)
-		}
-
-		perfFd := C.perf_reader_fd((*C.struct_perf_reader)(reader))
-
-		readers = append(readers, (*C.struct_perf_reader)(reader))
-
-		byteOrder.PutUint32(leaf, uint32(perfFd))
-
-		r, err := C.bpf_update_elem(C.int(table.fd), keyP, leafP, 0)
-		if r != 0 {
-			return nil, fmt.Errorf("unable to initialize perf map: %v", err)
-		}
-		r = C.bpf_get_next_key(C.int(table.fd), keyP, keyP)
-		if r != 0 {
-			break
+			errStr += fmt.Sprintf("close epoll: %v\n", err)
 		}
 	}
-	return &PerfMap{
-		table:   table,
-		readers: readers,
-		stop:    make(chan bool, 1),
-	}, nil
-}
 
-// Start to poll the perf map reader and send back event data
-// over the connected channel.
-func (pm *PerfMap) Start(timeout int) {
-	go pm.poll(timeout)
-}
-
-// Stop to poll the perf map readers after a maximum of timeout (ms)
-// (the timeout we use for perf_reader_poll). Ideally we would
-// have a way to cancel the poll, but perf_reader_poll doesn't
-// support that yet.
-func (pm *PerfMap) Stop() {
-	pm.stop <- true
-}
-
-func (pm *PerfMap) poll(timeout int) {
-	for {
-		select {
-		case <-pm.stop:
-			return
-		default:
-			C.perf_reader_poll(C.int(len(pm.readers)), &pm.readers[0], C.int(timeout))
+	for cpu := range perf.readers {
+		if err := perf.closeOnCpu(cpu); err != nil {
+			errStr += fmt.Sprintf("cpu %d: %v\n", cpu, err)
 		}
 	}
+
+	unregisterCallback(perf.cbIdx)
+	perf.cbIdx = 0
+
+	if errStr != "" {
+		return fmt.Errorf("%s", errStr)
+	}
+	return nil
 }
 
-func bpfOpenPerfBuffer(cpu uint, callbackDataIndex uint64, pageCnt int) (unsafe.Pointer, error) {
+func (perf *PerfBuffer) Poll(timeout time.Duration) int {
+	if perf.epfd < 0 {
+		return -1
+	}
+
+	timeoutMs := C.int(timeout.Milliseconds())
+	cnt, err := C.epoll_wait(perf.epfd, &perf.epEvents[0], C.int(len(perf.readers)), timeoutMs)
+	if err != nil {
+		log.Printf("epoll_wait: %v", err)
+	}
+
+	for i := 0; i < int(cnt); i++ {
+		C.perf_reader_event_read((*C.struct_perf_reader)(unsafe.Pointer(C.get_event_data_ptr(perf.epEvents[i]))))
+	}
+	return int(cnt)
+}
+
+func (perf *PerfBuffer) Consume() int {
+	if perf.epfd < 0 {
+		return -1
+	}
+	for _, reader := range perf.readers {
+		C.perf_reader_event_read(reader)
+	}
+	return 0
+}
+
+func (perf *PerfBuffer) openOnCpu(recv ReceiveCallback, lost LostCallback, pageCnt int, opts C.struct_bcc_perf_buffer_opts) error {
+	if _, ok := perf.readers[int(opts.cpu)]; ok {
+		return fmt.Errorf("perf buffer already open on CPU %d", opts.cpu)
+	}
 	if (pageCnt & (pageCnt - 1)) != 0 {
-		return nil, fmt.Errorf("pageCnt must be a power of 2: %d", pageCnt)
+		return fmt.Errorf("pageCnt must be a power of 2: %d", pageCnt)
 	}
-	cpuC := C.int(cpu)
+
 	pageCntC := C.int(pageCnt)
-	reader, err := C.bpf_open_perf_buffer(
+	reader, err := C.bpf_open_perf_buffer_opts(
 		(C.perf_reader_raw_cb)(unsafe.Pointer(C.rawCallback)),
 		(C.perf_reader_lost_cb)(unsafe.Pointer(C.lostCallback)),
-		unsafe.Pointer(uintptr(callbackDataIndex)),
-		-1, cpuC, pageCntC)
+		unsafe.Pointer(uintptr(perf.cbIdx)),
+		pageCntC, &opts)
 	if reader == nil {
-		return nil, fmt.Errorf("failed to open perf buffer: %v", err)
+		return fmt.Errorf("unable to open perf buffer: %v", err)
 	}
 
-	return reader, nil
-}
-
-func intRoundUpAndDivide(x, y int) int {
-	return (x + (y - 1)) / y
-}
-
-func intRoudUpToPow2(x int) int {
-	var power int = 1
-	for power < x {
-		power *= 2
+	readerFd := C.perf_reader_fd(((*C.struct_perf_reader)(reader)))
+	if err = perf.table.Update(unsafe.Pointer(&opts.cpu), unsafe.Pointer(&readerFd)); err != nil {
+		C.perf_reader_free(unsafe.Pointer(reader))
+		return fmt.Errorf("unable to open perf buffer on CPU %d: %v", opts.cpu, err)
 	}
-	return power
+
+	event := C.create_ptr_event(C.EPOLLIN, unsafe.Pointer(reader))
+	if _, err = C.epoll_ctl(perf.epfd, C.EPOLL_CTL_ADD, readerFd, &event); err != nil {
+		C.perf_reader_free(unsafe.Pointer(reader))
+		return fmt.Errorf("unable to add perf buffer FD to epoll: %v", err)
+	}
+
+	perf.readers[int(opts.cpu)] = ((*C.struct_perf_reader)(reader))
+	return nil
+}
+
+func (perf *PerfBuffer) closeOnCpu(cpu int) error {
+	reader := perf.readers[cpu]
+	if reader == nil {
+		return nil
+	}
+	C.perf_reader_free(unsafe.Pointer(reader))
+	cpuC := C.int(cpu)
+	if err := perf.table.Remove(unsafe.Pointer(&cpuC)); err != nil {
+		return fmt.Errorf("unable to close perf buffer on CPU: %d, %v", cpu, err)
+	}
+
+	delete(perf.readers, cpu)
+	return nil
 }

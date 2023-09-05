@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 
 	bpf "github.com/iovisor/gobpf/bcc"
@@ -224,11 +225,83 @@ func run() {
 		os.Exit(1)
 	}
 
-	table := bpf.NewTable(m.TableId("events"), m)
+	out := newOutput(*format, *pretty, *timestamps)
+	out.PrintHeader()
 
-	channel := make(chan []byte, 1000)
+	args := make(map[uint64][]string)
+	onRecv := func(data []byte) {
+		var event execveEvent
+		err := binary.Read(bytes.NewBuffer(data), bpf.GetHostByteOrder(), &event)
+		if err != nil {
+			fmt.Printf("failed to decode received data: %s\n", err)
+			return
+		}
 
-	perfMap, err := bpf.InitPerfMap(table, channel, nil)
+		if eventArg == EventType(event.Type) {
+			e, ok := args[event.Pid]
+			if !ok {
+				e = make([]string, 0)
+			}
+			argv := (*C.char)(unsafe.Pointer(&event.Argv))
+
+			e = append(e, C.GoString(argv))
+			args[event.Pid] = e
+		} else {
+			if event.RetVal != 0 && !*traceFailed {
+				delete(args, event.Pid)
+				return
+			}
+
+			comm := C.GoString((*C.char)(unsafe.Pointer(&event.Comm)))
+			if *filterComm != "" && !strings.Contains(comm, *filterComm) {
+				delete(args, event.Pid)
+				return
+			}
+
+			argv, ok := args[event.Pid]
+			if !ok {
+				return
+			}
+
+			if *filterArg != "" && !strings.Contains(strings.Join(argv, " "), *filterArg) {
+				delete(args, event.Pid)
+				return
+			}
+
+			p := eventPayload{
+				Pid:    event.Pid,
+				Ppid:   "?",
+				Comm:   comm,
+				RetVal: event.RetVal,
+			}
+
+			if event.Ppid == 0 {
+				event.Ppid = getPpid(event.Pid)
+			}
+
+			if event.Ppid != 0 {
+				p.Ppid = strconv.FormatUint(event.Ppid, 10)
+			}
+
+			if *quotemarks {
+				var b bytes.Buffer
+				for i, a := range argv {
+					b.WriteString(strings.Replace(a, `"`, `\"`, -1))
+					if i != len(argv)-1 {
+						b.WriteString(" ")
+					}
+				}
+				p.Argv = b.String()
+			} else {
+				p.Argv = strings.Join(argv, " ")
+			}
+			p.Argv = strings.TrimSpace(strings.Replace(p.Argv, "\n", "\\n", -1))
+
+			out.PrintLine(p)
+			delete(args, event.Pid)
+		}
+	}
+	err = m.OpenPerfBuffer("events", onRecv, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -237,89 +310,13 @@ func run() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)
 
-	go func() {
-		out := newOutput(*format, *pretty, *timestamps)
-		out.PrintHeader()
-
-		args := make(map[uint64][]string)
-
-		for {
-			data := <-channel
-
-			var event execveEvent
-			err := binary.Read(bytes.NewBuffer(data), bpf.GetHostByteOrder(), &event)
-			if err != nil {
-				fmt.Printf("failed to decode received data: %s\n", err)
-				continue
-			}
-
-			if eventArg == EventType(event.Type) {
-				e, ok := args[event.Pid]
-				if !ok {
-					e = make([]string, 0)
-				}
-				argv := (*C.char)(unsafe.Pointer(&event.Argv))
-
-				e = append(e, C.GoString(argv))
-				args[event.Pid] = e
-			} else {
-				if event.RetVal != 0 && !*traceFailed {
-					delete(args, event.Pid)
-					continue
-				}
-
-				comm := C.GoString((*C.char)(unsafe.Pointer(&event.Comm)))
-				if *filterComm != "" && !strings.Contains(comm, *filterComm) {
-					delete(args, event.Pid)
-					continue
-				}
-
-				argv, ok := args[event.Pid]
-				if !ok {
-					continue
-				}
-
-				if *filterArg != "" && !strings.Contains(strings.Join(argv, " "), *filterArg) {
-					delete(args, event.Pid)
-					continue
-				}
-
-				p := eventPayload{
-					Pid:    event.Pid,
-					Ppid:   "?",
-					Comm:   comm,
-					RetVal: event.RetVal,
-				}
-
-				if event.Ppid == 0 {
-					event.Ppid = getPpid(event.Pid)
-				}
-
-				if event.Ppid != 0 {
-					p.Ppid = strconv.FormatUint(event.Ppid, 10)
-				}
-
-				if *quotemarks {
-					var b bytes.Buffer
-					for i, a := range argv {
-						b.WriteString(strings.Replace(a, `"`, `\"`, -1))
-						if i != len(argv)-1 {
-							b.WriteString(" ")
-						}
-					}
-					p.Argv = b.String()
-				} else {
-					p.Argv = strings.Join(argv, " ")
-				}
-				p.Argv = strings.TrimSpace(strings.Replace(p.Argv, "\n", "\\n", -1))
-
-				out.PrintLine(p)
-				delete(args, event.Pid)
-			}
+	for {
+		select {
+		case <-sig:
+			return
+		default:
 		}
-	}()
-
-	perfMap.Start(500)
-	<-sig
-	perfMap.Stop()
+		time.Sleep(500 * time.Millisecond)
+		m.PollPerfBuffer("events", 0)
+	}
 }
