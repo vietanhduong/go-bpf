@@ -127,7 +127,6 @@ func main() {
 		if stack.pid != C.uint32_t(pid) {
 			continue
 		}
-		log.Printf("correct pid")
 		var symbols []string
 		if stack.user_stack_id > 0 {
 			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
