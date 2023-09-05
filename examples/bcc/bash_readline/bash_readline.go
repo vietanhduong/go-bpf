@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	bpf "github.com/iovisor/gobpf/bcc"
 )
@@ -69,11 +70,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	table := bpf.NewTable(m.TableId("readline_events"), m)
+	onRecv := func(data []byte) {
+		var event readlineEvent
+		err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
+		if err != nil {
+			fmt.Printf("failed to decode received data: %s\n", err)
+			return
+		}
+		// Convert C string (null-terminated) to Go string
+		comm := string(event.Str[:bytes.IndexByte(event.Str[:], 0)])
+		fmt.Printf("%10d\t%s\n", event.Pid, comm)
+	}
 
-	channel := make(chan []byte)
-
-	perfMap, err := bpf.InitPerfMap(table, channel, nil)
+	err = m.OpenPerfBuffer("readline_events", onRecv, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -83,22 +92,13 @@ func main() {
 	signal.Notify(sig, os.Interrupt, os.Kill)
 
 	fmt.Printf("%10s\t%s\n", "PID", "COMMAND")
-	go func() {
-		var event readlineEvent
-		for {
-			data := <-channel
-			err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
-			if err != nil {
-				fmt.Printf("failed to decode received data: %s\n", err)
-				continue
-			}
-			// Convert C string (null-terminated) to Go string
-			comm := string(event.Str[:bytes.IndexByte(event.Str[:], 0)])
-			fmt.Printf("%10d\t%s\n", event.Pid, comm)
+	for {
+		select {
+		case <-sig:
+			return
+		default:
 		}
-	}()
-
-	perfMap.Start(500)
-	<-sig
-	perfMap.Stop()
+		time.Sleep(500 * time.Millisecond)
+		m.PollPerfBuffer("readline_events", 0)
+	}
 }

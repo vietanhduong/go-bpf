@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 	"unsafe"
 
 	bpf "github.com/iovisor/gobpf/bcc"
@@ -114,35 +115,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	table := bpf.NewTable(m.TableId("chown_events"), m)
+	onRecv := func(data []byte) {
+		var event chownEvent
+		err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
+		if err != nil {
+			fmt.Printf("failed to decode received data: %s\n", err)
+			return
+		}
+		filename := (*C.char)(unsafe.Pointer(&event.Filename))
+		fmt.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
+			event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
+	}
 
-	channel := make(chan []byte)
-
-	perfMap, err := bpf.InitPerfMap(table, channel, nil)
+	err = m.OpenPerfBuffer("chown_events", onRecv, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
 	}
-
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)
-
-	go func() {
-		var event chownEvent
-		for {
-			data := <-channel
-			err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
-			if err != nil {
-				fmt.Printf("failed to decode received data: %s\n", err)
-				continue
-			}
-			filename := (*C.char)(unsafe.Pointer(&event.Filename))
-			fmt.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
-				event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
+	for {
+		select {
+		case <-sig:
+			return
+		default:
 		}
-	}()
-
-	perfMap.Start(500)
-	<-sig
-	perfMap.Stop()
+		time.Sleep(500 * time.Millisecond)
+		m.PollPerfBuffer("chown_events", 0)
+	}
 }

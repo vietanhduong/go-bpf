@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/iovisor/gobpf/pkg/cpuonline"
@@ -67,6 +68,7 @@ type Module struct {
 	tracepoints    map[string]int
 	rawTracepoints map[string]int
 	perfEvents     map[string][]int
+	perfBuffers    map[string]*PerfBuffer
 }
 
 type compileRequest struct {
@@ -88,6 +90,8 @@ const (
 	XDP_FLAGS_MODES = XDP_FLAGS_SKB_MODE | XDP_FLAGS_DRV_MODE | XDP_FLAGS_HW_MODE
 	XDP_FLAGS_MASK  = XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_MODES
 )
+
+const DEFAULT_PERF_BUFFER_PAGE_CNT = 8
 
 var (
 	defaultCflags []string
@@ -131,6 +135,7 @@ func newModule(code string, cflags []string) *Module {
 		tracepoints:    make(map[string]int),
 		rawTracepoints: make(map[string]int),
 		perfEvents:     make(map[string][]int),
+		perfBuffers:    make(map[string]*PerfBuffer),
 	}
 }
 
@@ -179,6 +184,9 @@ func (bpf *Module) Close() {
 		for _, v := range vs {
 			C.bpf_close_perf_event_fd((C.int)(v))
 		}
+	}
+	for perfName := range bpf.perfBuffers {
+		bpf.ClosePerfBuffer(perfName)
 	}
 	for _, fd := range bpf.funcs {
 		syscall.Close(fd)
@@ -478,6 +486,39 @@ func (bpf *Module) AttachMatchingUretprobes(name, match string, fd, pid int) err
 		}
 	}
 	return nil
+}
+
+func (bpf *Module) OpenPerfBuffer(name string, recv ReceiveCallback, lost LostCallback, pageCnt int) error {
+	perfBuf := bpf.perfBuffers[name]
+	if perfBuf == nil {
+		perfBuf = CreatePerfBuffer(NewTable(bpf.TableId(name), bpf))
+		bpf.perfBuffers[name] = perfBuf
+	}
+	if pageCnt <= 0 {
+		pageCnt = DEFAULT_PERF_BUFFER_PAGE_CNT
+	}
+	return perfBuf.OpenAllCpu(recv, lost, pageCnt)
+}
+
+func (bpf *Module) ClosePerfBuffer(name string) error {
+	perfBuf := bpf.perfBuffers[name]
+	if perfBuf == nil {
+		return fmt.Errorf("perf buffer for %s not open", name)
+	}
+	defer delete(bpf.perfBuffers, name)
+	return perfBuf.CloseAllCpu()
+}
+
+func (bpf *Module) GetPerfBuffer(name string) *PerfBuffer {
+	return bpf.perfBuffers[name]
+}
+
+func (bpf *Module) PollPerfBuffer(name string, timeout time.Duration) int {
+	perfBuf := bpf.perfBuffers[name]
+	if perfBuf == nil {
+		return -1
+	}
+	return perfBuf.Poll(timeout)
 }
 
 // TableSize returns the number of tables in the module.

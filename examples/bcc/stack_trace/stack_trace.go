@@ -98,29 +98,23 @@ func main() {
 		sleep = 30
 	}
 
-	aggregate := func() map[C.struct_key_t]int {
-		channel := make(chan []byte)
-		histogram := bpf.NewTable(m.TableId("histogram"), m)
+	aggregate := func() []*C.struct_key_t {
+		var stacks []*C.struct_key_t
+		pageCnt := IntRoudUpToPow2(IntRoundUpAndDivide(1024*1024, os.Getpagesize()))
 
-		perfMap, err := bpf.InitPerfMap(histogram, channel, nil)
+		err := m.OpenPerfBuffer("histogram", func(b []byte) {
+			event := (*C.struct_key_t)(unsafe.Pointer(&b[0]))
+			stacks = append(stacks, event)
+		}, nil, pageCnt)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 			os.Exit(1)
 		}
-		stacks := make(map[C.struct_key_t]int)
+
 		done := time.After(time.Duration(sleep) * time.Second)
-		perfMap.Start(0)
-		defer perfMap.Stop()
-		for {
-			select {
-			case <-done:
-				log.Printf("DONE")
-				return stacks
-			case data := <-channel:
-				event := (*C.struct_key_t)(unsafe.Pointer(&data[0]))
-				stacks[*event]++
-			}
-		}
+		<-done
+		m.PollPerfBuffer("histogram", 0)
+		return stacks
 	}
 	stacks := aggregate()
 	log.Printf("preparing to aggregate stack...")
@@ -129,14 +123,13 @@ func main() {
 	bccSym := bcc.NewSymbolizer()
 
 	all := make(map[string]int)
-	for stack, count := range stacks {
+	for _, stack := range stacks {
 		if stack.pid != C.uint32_t(pid) {
 			continue
 		}
+		log.Printf("correct pid")
 		var symbols []string
-		var v int
 		if stack.user_stack_id > 0 {
-			v += count
 			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
 			for _, addr := range addrs {
 				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(pid, addr))
@@ -144,7 +137,6 @@ func main() {
 		}
 
 		if stack.kernel_stack_id > 0 {
-			v += count
 			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
 			for _, addr := range addrs {
 				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(-1, addr))
@@ -152,11 +144,23 @@ func main() {
 		}
 
 		if len(symbols) != 0 {
-			all[strings.Join(symbols, ";")] += count
+			all[strings.Join(symbols, ";")]++
 		}
 	}
 
 	for k, v := range all {
 		log.Printf("%s: %v", k, v)
 	}
+}
+
+func IntRoundUpAndDivide(x, y int) int {
+	return (x + (y - 1)) / y
+}
+
+func IntRoudUpToPow2(x int) int {
+	var power int = 1
+	for power < x {
+		power *= 2
+	}
+	return power
 }
