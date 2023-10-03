@@ -70,19 +70,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	onRecv := func(_ interface{}, raw []byte, _ int32) {
-		var event readlineEvent
-		err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
-		if err != nil {
-			fmt.Printf("failed to decode received data: %s\n", err)
-			return
-		}
-		// Convert C string (null-terminated) to Go string
-		comm := string(event.Str[:bytes.IndexByte(event.Str[:], 0)])
-		fmt.Printf("%10d\t%s\n", event.Pid, comm)
-	}
-
-	err = m.OpenPerfBuffer("readline_events", nil, onRecv, nil, 0)
+	err = m.OpenPerfBuffer("readline_events", &callback{}, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -102,3 +90,19 @@ func main() {
 		m.PollPerfBuffer("readline_events", 0)
 	}
 }
+
+type callback struct{}
+
+func (cb *callback) RawSample(raw []byte, size int32) {
+	var event readlineEvent
+	err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
+	if err != nil {
+		fmt.Printf("failed to decode received data: %s\n", err)
+		return
+	}
+	// Convert C string (null-terminated) to Go string
+	comm := string(event.Str[:bytes.IndexByte(event.Str[:], 0)])
+	fmt.Printf("%10d\t%s\n", event.Pid, comm)
+}
+
+func (cb *callback) LostSamples(uint64) {}

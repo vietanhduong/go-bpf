@@ -488,7 +488,7 @@ func (bpf *Module) AttachMatchingUretprobes(name, match string, fd, pid int) err
 	return nil
 }
 
-func (bpf *Module) OpenPerfBuffer(name string, cookie interface{}, rawCb RawCb, lostCb LostCb, pageCnt int) error {
+func (bpf *Module) OpenPerfBuffer(name string, cb Callback, pageCnt int) error {
 	perfBuf := bpf.perfBuffers[name]
 	if perfBuf == nil {
 		perfBuf = CreatePerfBuffer(NewTable(bpf.TableId(name), bpf))
@@ -497,7 +497,7 @@ func (bpf *Module) OpenPerfBuffer(name string, cookie interface{}, rawCb RawCb, 
 	if pageCnt <= 0 {
 		pageCnt = DEFAULT_PERF_BUFFER_PAGE_CNT
 	}
-	return perfBuf.OpenAllCpu(cookie, rawCb, lostCb, pageCnt)
+	return perfBuf.OpenAllCpu(cb, pageCnt)
 }
 
 func (bpf *Module) ClosePerfBuffer(name string) error {

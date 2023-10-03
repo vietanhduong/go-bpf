@@ -116,19 +116,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	onRecv := func(_ interface{}, raw []byte, size int32) {
-		var event chownEvent
-		err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
-		if err != nil {
-			fmt.Printf("failed to decode received data: %s\n", err)
-			return
-		}
-		filename := (*C.char)(unsafe.Pointer(&event.Filename))
-		fmt.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
-			event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
-	}
-
-	err = m.OpenPerfBuffer("chown_events", nil, onRecv, nil, 0)
+	err = m.OpenPerfBuffer("chown_events", &callback{}, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -145,3 +133,19 @@ func main() {
 		m.PollPerfBuffer("chown_events", 0)
 	}
 }
+
+type callback struct{}
+
+func (cb *callback) RawSample(raw []byte, size int32) {
+	var event chownEvent
+	err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
+	if err != nil {
+		fmt.Printf("failed to decode received data: %s\n", err)
+		return
+	}
+	filename := (*C.char)(unsafe.Pointer(&event.Filename))
+	fmt.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
+		event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
+}
+
+func (cb *callback) LostSamples(uint64) {}

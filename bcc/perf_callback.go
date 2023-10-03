@@ -18,39 +18,21 @@ extern void lostCallback(void*, uint64_t);
 import "C"
 
 import (
-	"encoding/binary"
 	"runtime/cgo"
 	"unsafe"
 )
 
-type (
-	RawCb  func(cookie interface{}, raw []byte, size int32)
-	LostCb func(cookie interface{}, lost uint64)
-)
-
-var byteOrder binary.ByteOrder
-
-// In lack of binary.HostEndian ...
-func init() {
-	byteOrder = determineHostByteOrder()
+type Callback interface {
+	RawSample(raw []byte, size int32)
+	LostSamples(lost uint64)
 }
 
-// GetHostByteOrder returns the current byte-order.
-func GetHostByteOrder() binary.ByteOrder {
-	return byteOrder
-}
+type emptyCallback struct{}
 
-func determineHostByteOrder() binary.ByteOrder {
-	var i int32 = 0x01020304
-	u := unsafe.Pointer(&i)
-	pb := (*byte)(u)
-	b := *pb
-	if b == 0x04 {
-		return binary.LittleEndian
-	}
+var _ Callback = (*emptyCallback)(nil)
 
-	return binary.BigEndian
-}
+func (*emptyCallback) RawSample([]byte, int32) {}
+func (*emptyCallback) LostSamples(uint64)      {}
 
 // Gateway function as required with CGO Go >= 1.6
 // "If a C-program wants a function pointer, a gateway function has to
@@ -59,19 +41,17 @@ func determineHostByteOrder() binary.ByteOrder {
 // stub in C that should be called."
 //
 //export rawCallback
-func rawCallback(cbCookie unsafe.Pointer, raw unsafe.Pointer, rawSize C.int) {
-	handler := *(*cgo.Handle)(cbCookie)
-	cb := handler.Value().(*callback)
-	if cb != nil && cb.raw != nil {
-		cb.raw(cb.cookie, C.GoBytes(raw, rawSize), int32(rawSize))
+func rawCallback(cookie unsafe.Pointer, raw unsafe.Pointer, rawSize C.int) {
+	handler := *(*cgo.Handle)(cookie)
+	if cb, ok := handler.Value().(Callback); ok && cb != nil {
+		cb.RawSample(C.GoBytes(raw, rawSize), int32(rawSize))
 	}
 }
 
 //export lostCallback
-func lostCallback(cbCookie unsafe.Pointer, lost C.uint64_t) {
-	handler := *(*cgo.Handle)(cbCookie)
-	cb := handler.Value().(*callback)
-	if cb != nil && cb.lost != nil {
-		cb.lost(cb.cookie, uint64(lost))
+func lostCallback(cookie unsafe.Pointer, lost C.uint64_t) {
+	handler := *(*cgo.Handle)(cookie)
+	if cb, ok := handler.Value().(Callback); ok && cb != nil {
+		cb.LostSamples(uint64(lost))
 	}
 }

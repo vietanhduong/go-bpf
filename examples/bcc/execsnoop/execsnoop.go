@@ -183,13 +183,14 @@ func main() {
 }
 
 func run() {
-	traceFailed := flag.Bool("x", false, "trace failed exec()s")
-	timestamps := flag.Bool("t", false, "include timestamps")
-	quotemarks := flag.Bool("q", false, `add "quotemarks" around arguments`)
-	filterComm := flag.String("n", "", `only print command lines containing a name, for example "main"`)
-	filterArg := flag.String("l", "", `only print command where arguments contain an argument, for example "tpkg"`)
-	format := flag.String("o", "table", "output format, either table or json")
-	pretty := flag.Bool("p", false, "pretty print json output")
+	cb := &callback{}
+	flag.BoolVar(&cb.traceFailed, "x", false, "trace failed exec()s")
+	flag.BoolVar(&cb.timestamps, "t", false, "include timestamps")
+	flag.BoolVar(&cb.quotemarks, "q", false, `add "quotemarks" around arguments`)
+	flag.StringVar(&cb.filterComm, "n", "", `only print command lines containing a name, for example "main"`)
+	flag.StringVar(&cb.filterArg, "l", "", `only print command where arguments contain an argument, for example "tpkg"`)
+	flag.StringVar(&cb.format, "o", "table", "output format, either table or json")
+	flag.BoolVar(&cb.pretty, "p", false, "pretty print json output")
 	maxArgs := flag.Uint64("m", 20, "maximum number of arguments parsed and displayed, defaults to 20")
 
 	flag.Parse()
@@ -225,83 +226,7 @@ func run() {
 		os.Exit(1)
 	}
 
-	out := newOutput(*format, *pretty, *timestamps)
-	out.PrintHeader()
-
-	args := make(map[uint64][]string)
-	onRecv := func(_ interface{}, raw []byte, _ int32) {
-		var event execveEvent
-		err := binary.Read(bytes.NewBuffer(raw), bpf.GetHostByteOrder(), &event)
-		if err != nil {
-			fmt.Printf("failed to decode received data: %s\n", err)
-			return
-		}
-
-		if eventArg == EventType(event.Type) {
-			e, ok := args[event.Pid]
-			if !ok {
-				e = make([]string, 0)
-			}
-			argv := (*C.char)(unsafe.Pointer(&event.Argv))
-
-			e = append(e, C.GoString(argv))
-			args[event.Pid] = e
-		} else {
-			if event.RetVal != 0 && !*traceFailed {
-				delete(args, event.Pid)
-				return
-			}
-
-			comm := C.GoString((*C.char)(unsafe.Pointer(&event.Comm)))
-			if *filterComm != "" && !strings.Contains(comm, *filterComm) {
-				delete(args, event.Pid)
-				return
-			}
-
-			argv, ok := args[event.Pid]
-			if !ok {
-				return
-			}
-
-			if *filterArg != "" && !strings.Contains(strings.Join(argv, " "), *filterArg) {
-				delete(args, event.Pid)
-				return
-			}
-
-			p := eventPayload{
-				Pid:    event.Pid,
-				Ppid:   "?",
-				Comm:   comm,
-				RetVal: event.RetVal,
-			}
-
-			if event.Ppid == 0 {
-				event.Ppid = getPpid(event.Pid)
-			}
-
-			if event.Ppid != 0 {
-				p.Ppid = strconv.FormatUint(event.Ppid, 10)
-			}
-
-			if *quotemarks {
-				var b bytes.Buffer
-				for i, a := range argv {
-					b.WriteString(strings.Replace(a, `"`, `\"`, -1))
-					if i != len(argv)-1 {
-						b.WriteString(" ")
-					}
-				}
-				p.Argv = b.String()
-			} else {
-				p.Argv = strings.Join(argv, " ")
-			}
-			p.Argv = strings.TrimSpace(strings.Replace(p.Argv, "\n", "\\n", -1))
-
-			out.PrintLine(p)
-			delete(args, event.Pid)
-		}
-	}
-	err = m.OpenPerfBuffer("events", nil, onRecv, nil, 0)
+	err = m.OpenPerfBuffer("events", cb, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -320,3 +245,91 @@ func run() {
 		m.PollPerfBuffer("events", 0)
 	}
 }
+
+type callback struct {
+	traceFailed bool
+	timestamps  bool
+	quotemarks  bool
+	filterComm  string
+	filterArg   string
+	format      string
+	pretty      bool
+}
+
+func (cb *callback) RawSample(raw []byte, size int32) {
+	out := newOutput(cb.format, cb.pretty, cb.timestamps)
+	out.PrintHeader()
+	args := make(map[uint64][]string)
+	var event execveEvent
+	err := binary.Read(bytes.NewBuffer(raw), bpf.GetHostByteOrder(), &event)
+	if err != nil {
+		fmt.Printf("failed to decode received data: %s\n", err)
+		return
+	}
+
+	if eventArg == EventType(event.Type) {
+		e, ok := args[event.Pid]
+		if !ok {
+			e = make([]string, 0)
+		}
+		argv := (*C.char)(unsafe.Pointer(&event.Argv))
+
+		e = append(e, C.GoString(argv))
+		args[event.Pid] = e
+	} else {
+		if event.RetVal != 0 && !cb.traceFailed {
+			delete(args, event.Pid)
+			return
+		}
+
+		comm := C.GoString((*C.char)(unsafe.Pointer(&event.Comm)))
+		if cb.filterComm != "" && !strings.Contains(comm, cb.filterComm) {
+			delete(args, event.Pid)
+			return
+		}
+
+		argv, ok := args[event.Pid]
+		if !ok {
+			return
+		}
+
+		if cb.filterArg != "" && !strings.Contains(strings.Join(argv, " "), cb.filterArg) {
+			delete(args, event.Pid)
+			return
+		}
+
+		p := eventPayload{
+			Pid:    event.Pid,
+			Ppid:   "?",
+			Comm:   comm,
+			RetVal: event.RetVal,
+		}
+
+		if event.Ppid == 0 {
+			event.Ppid = getPpid(event.Pid)
+		}
+
+		if event.Ppid != 0 {
+			p.Ppid = strconv.FormatUint(event.Ppid, 10)
+		}
+
+		if cb.quotemarks {
+			var b bytes.Buffer
+			for i, a := range argv {
+				b.WriteString(strings.Replace(a, `"`, `\"`, -1))
+				if i != len(argv)-1 {
+					b.WriteString(" ")
+				}
+			}
+			p.Argv = b.String()
+		} else {
+			p.Argv = strings.Join(argv, " ")
+		}
+		p.Argv = strings.TrimSpace(strings.Replace(p.Argv, "\n", "\\n", -1))
+
+		out.PrintLine(p)
+		delete(args, event.Pid)
+	}
+}
+
+func (cb *callback) LostSamples(uint64) {}

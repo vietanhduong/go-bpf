@@ -10,7 +10,6 @@ import (
 	"unsafe"
 
 	"github.com/vietanhduong/go-bpf/bcc"
-	bpf "github.com/vietanhduong/go-bpf/bcc"
 )
 
 /*
@@ -84,7 +83,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := bpf.NewModule(source, []string{})
+	m := bcc.NewModule(source, []string{})
 	defer m.Close()
 
 	fd, err := m.LoadPerfEvent("do_perf_event")
@@ -104,22 +103,11 @@ func main() {
 		sleep = 30
 	}
 
-	tcb := &testCb{}
-
 	aggregate := func() []*key {
-		var stacks []*key
+		cb := newCb(pid)
 		pageCnt := IntRoudUpToPow2(IntRoundUpAndDivide(1024*1024, os.Getpagesize()))
 
-		err := m.OpenPerfBuffer("histogram", tcb, func(cookie interface{}, raw []byte, size int32) {
-			stack := (*key)(unsafe.Pointer(&raw[0]))
-			if stack.pid == uint32(pid) {
-				t, ok := cookie.(*testCb)
-				if ok {
-					t.counter++
-				}
-				stacks = append(stacks, stack)
-			}
-		}, nil, pageCnt)
+		err := m.OpenPerfBuffer("histogram", cb, pageCnt)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 			os.Exit(1)
@@ -128,13 +116,13 @@ func main() {
 		done := time.After(time.Duration(sleep) * time.Second)
 		<-done
 		m.PollPerfBuffer("histogram", 0)
-		log.Printf("Total stack: %v", tcb.counter)
-		return stacks
+		log.Printf("Total stack: %v", cb.counter)
+		return cb.stacks
 	}
 	stacks := aggregate()
 	log.Printf("preparing to aggregate stack...")
 
-	stackTable := bpf.NewTable(m.TableId("stack_traces"), m)
+	stackTable := bcc.NewTable(m.TableId("stack_traces"), m)
 	bccSym := bcc.NewSymbolizer()
 
 	all := make(map[string]int)
@@ -176,12 +164,22 @@ func IntRoudUpToPow2(x int) int {
 	return power
 }
 
-type testCb struct {
+type stackTraceCb struct {
 	counter int
+	stacks  []*key
+	pid     int
 }
 
-func (t *testCb) Raw() bpf.RawCb {
-	log.Printf("received")
-	return func(cookie interface{}, raw []byte, size int32) {
+func newCb(pid int) *stackTraceCb {
+	return &stackTraceCb{pid: pid}
+}
+
+func (t *stackTraceCb) RawSample(raw []byte, size int32) {
+	stack := (*key)(unsafe.Pointer(&raw[0]))
+	if stack.pid == uint32(t.pid) {
+		t.counter++
+		t.stacks = append(t.stacks, stack)
 	}
 }
+
+func (t *stackTraceCb) LostSamples(lost uint64) {}

@@ -3,6 +3,7 @@ package bcc
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"runtime/cgo"
 	"time"
 	"unsafe"
@@ -37,12 +38,6 @@ void* get_event_data_ptr(struct epoll_event event) { return event.data.ptr; }
 */
 import "C"
 
-type callback struct {
-	raw    RawCb
-	lost   LostCb
-	cookie interface{}
-}
-
 type PerfBuffer struct {
 	table    *Table
 	epfd     C.int
@@ -63,7 +58,7 @@ func (perf *PerfBuffer) Close() error {
 	return perf.CloseAllCpu()
 }
 
-func (perf *PerfBuffer) OpenAllCpu(cookie interface{}, rawCb RawCb, lostCb LostCb, pageCnt int) error {
+func (perf *PerfBuffer) OpenAllCpu(cb Callback, pageCnt int) error {
 	if len(perf.readers) != 0 || perf.epfd != -1 {
 		return fmt.Errorf("perviously opened perf buffer not cleaned")
 	}
@@ -73,14 +68,18 @@ func (perf *PerfBuffer) OpenAllCpu(cookie interface{}, rawCb RawCb, lostCb LostC
 		return fmt.Errorf("get online cpu: %v", err)
 	}
 
-	perf.handler = cgo.NewHandle(&callback{
-		raw:    rawCb,
-		lost:   lostCb,
-		cookie: cookie,
-	})
+	if cb == nil {
+		cb = &emptyCallback{}
+	}
 
 	perf.epEvents = make([]C.struct_epoll_event, len(cpus))
-	perf.epfd = C.epoll_create1(C.EPOLL_CLOEXEC)
+	perf.epfd, err = C.epoll_create1(C.EPOLL_CLOEXEC)
+	if err != nil {
+		return fmt.Errorf("failed to create epoll: %v", err)
+	}
+
+	perf.handler = cgo.NewHandle(cb)
+	runtime.SetFinalizer(perf, (*PerfBuffer).Close)
 
 	for _, cpu := range cpus {
 		opts := &C.struct_bcc_perf_buffer_opts{
