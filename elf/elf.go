@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 // Copyright 2016 Cilium Project
@@ -31,10 +32,10 @@ import (
 	"syscall"
 	"unsafe"
 
-	_ "github.com/iovisor/gobpf/elf/include"
-	_ "github.com/iovisor/gobpf/elf/include/uapi/linux"
-	"github.com/iovisor/gobpf/pkg/bpffs"
-	"github.com/iovisor/gobpf/pkg/cpuonline"
+	_ "github.com/vietanhduong/gobpf/elf/include"
+	_ "github.com/vietanhduong/gobpf/elf/include/uapi/linux"
+	"github.com/vietanhduong/gobpf/pkg/bpffs"
+	"github.com/vietanhduong/gobpf/pkg/cpuonline"
 )
 
 /*
@@ -685,9 +686,9 @@ func (b *Module) Load(parameters map[string]SectionParams) error {
 					}
 				case isXDP:
 					b.xdpPrograms[secName] = &XDPProgram{
-						Name: secName,
+						Name:  secName,
 						insns: insns,
-						fd: int(progFd),
+						fd:    int(progFd),
 					}
 				}
 			}
@@ -822,9 +823,9 @@ func (b *Module) Load(parameters map[string]SectionParams) error {
 				}
 			case isXDP:
 				b.xdpPrograms[secName] = &XDPProgram{
-					Name: secName,
+					Name:  secName,
 					insns: insns,
-					fd: int(progFd),
+					fd:    int(progFd),
 				}
 			}
 		}

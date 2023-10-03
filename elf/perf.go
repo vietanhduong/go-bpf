@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 // Copyright 2016 Cilium Project
@@ -25,7 +26,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/iovisor/gobpf/pkg/cpuonline"
+	"github.com/vietanhduong/gobpf/pkg/cpuonline"
 )
 
 /*
@@ -430,7 +431,7 @@ func (pm *PerfMap) PollStop() {
 func perfEventPoll(fds []C.int) error {
 	var pfds []C.struct_pollfd
 
-	for i, _ := range fds {
+	for i := range fds {
 		var pfd C.struct_pollfd
 
 		pfd.fd = fds[i]

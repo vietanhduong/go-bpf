@@ -24,7 +24,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/iovisor/gobpf/pkg/cpuonline"
+	"github.com/vietanhduong/gobpf/pkg/cpuonline"
 )
 
 /*
@@ -488,7 +488,7 @@ func (bpf *Module) AttachMatchingUretprobes(name, match string, fd, pid int) err
 	return nil
 }
 
-func (bpf *Module) OpenPerfBuffer(name string, recv ReceiveCallback, lost LostCallback, pageCnt int) error {
+func (bpf *Module) OpenPerfBuffer(name string, cookie interface{}, rawCb RawCb, lostCb LostCb, pageCnt int) error {
 	perfBuf := bpf.perfBuffers[name]
 	if perfBuf == nil {
 		perfBuf = CreatePerfBuffer(NewTable(bpf.TableId(name), bpf))
@@ -497,7 +497,7 @@ func (bpf *Module) OpenPerfBuffer(name string, recv ReceiveCallback, lost LostCa
 	if pageCnt <= 0 {
 		pageCnt = DEFAULT_PERF_BUFFER_PAGE_CNT
 	}
-	return perfBuf.OpenAllCpu(recv, lost, pageCnt)
+	return perfBuf.OpenAllCpu(cookie, rawCb, lostCb, pageCnt)
 }
 
 func (bpf *Module) ClosePerfBuffer(name string) error {

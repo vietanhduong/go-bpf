@@ -25,7 +25,7 @@ import (
 	"time"
 	"unsafe"
 
-	bpf "github.com/iovisor/gobpf/bcc"
+	bpf "github.com/vietanhduong/gobpf/bcc"
 )
 
 import "C"
@@ -229,9 +229,9 @@ func run() {
 	out.PrintHeader()
 
 	args := make(map[uint64][]string)
-	onRecv := func(data []byte) {
+	onRecv := func(_ interface{}, raw []byte, _ int32) {
 		var event execveEvent
-		err := binary.Read(bytes.NewBuffer(data), bpf.GetHostByteOrder(), &event)
+		err := binary.Read(bytes.NewBuffer(raw), bpf.GetHostByteOrder(), &event)
 		if err != nil {
 			fmt.Printf("failed to decode received data: %s\n", err)
 			return
@@ -301,7 +301,7 @@ func run() {
 			delete(args, event.Pid)
 		}
 	}
-	err = m.OpenPerfBuffer("events", onRecv, nil, 0)
+	err = m.OpenPerfBuffer("events", nil, onRecv, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)

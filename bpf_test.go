@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // Copyright 2016 PLUMgrid
@@ -27,10 +28,10 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/iovisor/gobpf/bcc"
-	"github.com/iovisor/gobpf/elf"
-	"github.com/iovisor/gobpf/pkg/bpffs"
-	"github.com/iovisor/gobpf/pkg/progtestrun"
+	"github.com/vietanhduong/gobpf/bcc"
+	"github.com/vietanhduong/gobpf/elf"
+	"github.com/vietanhduong/gobpf/pkg/bpffs"
+	"github.com/vietanhduong/gobpf/pkg/progtestrun"
 )
 
 // redefine flags here as cgo in test is not supported
@@ -307,7 +308,7 @@ func containsSocketFilter(socketFilters []*elf.SocketFilter, name string) bool {
 }
 
 func checkMaps(t *testing.T, b *elf.Module) {
-	var expectedMaps = []string{
+	expectedMaps := []string{
 		"dummy_hash",
 		"dummy_array",
 		"dummy_prog_array",
@@ -350,7 +351,7 @@ func checkMaps(t *testing.T, b *elf.Module) {
 }
 
 func checkProbes(t *testing.T, b *elf.Module) {
-	var expectedProbes = []string{
+	expectedProbes := []string{
 		"kprobe/dummy",
 		"kretprobe/dummy",
 	}
@@ -370,7 +371,7 @@ func checkProbes(t *testing.T, b *elf.Module) {
 }
 
 func checkUprobes(t *testing.T, b *elf.Module) {
-	var expectedUprobes = []string{
+	expectedUprobes := []string{
 		"uprobe/dummy",
 		"uretprobe/dummy",
 	}
@@ -395,7 +396,7 @@ func checkCgroupProgs(t *testing.T, b *elf.Module) {
 		return
 	}
 
-	var expectedCgroupProgs = []string{
+	expectedCgroupProgs := []string{
 		"cgroup/skb",
 		"cgroup/sock",
 	}
@@ -420,7 +421,7 @@ func checkXDPProgs(t *testing.T, b *elf.Module) {
 		t.Skip()
 	}
 
-	var expectedXDPProgs = []string{
+	expectedXDPProgs := []string{
 		"xdp/prog1",
 		"xdp/prog2",
 	}
@@ -440,7 +441,7 @@ func checkTracepointProgs(t *testing.T, b *elf.Module) {
 		return
 	}
 
-	var expectedTracepointProgs = []string{
+	expectedTracepointProgs := []string{
 		"tracepoint/raw_syscalls/sys_enter",
 	}
 
@@ -459,7 +460,7 @@ func checkTracepointProgs(t *testing.T, b *elf.Module) {
 }
 
 func checkSocketFilters(t *testing.T, b *elf.Module) {
-	var expectedSocketFilters = []string{
+	expectedSocketFilters := []string{
 		"socket/dummy",
 	}
 
@@ -644,13 +645,13 @@ func TestModuleLoadELF(t *testing.T) {
 		dummyELF = "./tests/dummy-46.o"
 	}
 
-	var secParams = map[string]elf.SectionParams{
-		"maps/dummy_array_custom": elf.SectionParams{
+	secParams := map[string]elf.SectionParams{
+		"maps/dummy_array_custom": {
 			PinPath: filepath.Join("gobpf-test", "testgroup1"),
 		},
 	}
-	var closeOptions = map[string]elf.CloseOptions{
-		"maps/dummy_array_custom": elf.CloseOptions{
+	closeOptions := map[string]elf.CloseOptions{
+		"maps/dummy_array_custom": {
 			Unpin:   true,
 			PinPath: filepath.Join("gobpf-test", "testgroup1"),
 		},

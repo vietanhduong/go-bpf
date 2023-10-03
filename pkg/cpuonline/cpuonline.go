@@ -3,7 +3,7 @@ package cpuonline
 import (
 	"os"
 
-	"github.com/iovisor/gobpf/pkg/cpurange"
+	"github.com/vietanhduong/gobpf/pkg/cpurange"
 )
 
 const cpuOnline = "/sys/devices/system/cpu/online"

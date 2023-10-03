@@ -35,9 +35,8 @@ extern void foreach_symbol_callback(char*, uint64_t);
 import "C"
 
 type Symbolizer struct {
-	bccSymbolCache  map[int]unsafe.Pointer
-	bccSymbolOpt    C.struct_bcc_symbol_option
-	bccSymbolStruct C.struct_bcc_symbol
+	bccSymbolCache map[int]unsafe.Pointer
+	bccSymbolOpt   C.struct_bcc_symbol_option
 }
 
 func NewSymbolizer() *Symbolizer {
@@ -53,16 +52,17 @@ func NewSymbolizer() *Symbolizer {
 }
 
 func (s *Symbolizer) SymbolOrAddrIfUnknown(pid int, addr uintptr) string {
+	symbol := &C.struct_bcc_symbol{}
 	cache := s.getBCCSymbolCache(pid)
-	resolved := C.bcc_symcache_resolve(cache, C.uint64_t(addr), &s.bccSymbolStruct)
+	resolved := C.bcc_symcache_resolve(cache, C.uint64_t(addr), symbol)
 	if resolved == 0 {
-		symbol := s.bccSymbolStruct.demangle_name
-		C.bcc_symbol_free_demangle_name(&s.bccSymbolStruct)
-		return C.GoString(symbol)
+		name := symbol.demangle_name
+		C.bcc_symbol_free_demangle_name(symbol)
+		return C.GoString(name)
 	}
 
-	if module := C.GoString(s.bccSymbolStruct.module); module != "" {
-		return s.formatModuleName(C.GoString(s.bccSymbolStruct.module), uintptr(s.bccSymbolStruct.offset))
+	if module := C.GoString(symbol.module); module != "" {
+		return s.formatModuleName(C.GoString(symbol.module), uintptr(symbol.offset))
 	}
 	return s.formatAddress(addr)
 }

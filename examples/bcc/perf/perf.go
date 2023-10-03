@@ -20,10 +20,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 	"unsafe"
 
-	bpf "github.com/iovisor/gobpf/bcc"
+	bpf "github.com/vietanhduong/gobpf/bcc"
 )
 
 import "C"
@@ -115,9 +116,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	onRecv := func(data []byte) {
+	onRecv := func(_ interface{}, raw []byte, size int32) {
 		var event chownEvent
-		err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
+		err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
 		if err != nil {
 			fmt.Printf("failed to decode received data: %s\n", err)
 			return
@@ -127,13 +128,13 @@ func main() {
 			event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
 	}
 
-	err = m.OpenPerfBuffer("chown_events", onRecv, nil, 0)
+	err = m.OpenPerfBuffer("chown_events", nil, onRecv, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
 	}
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, os.Kill)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	for {
 		select {
 		case <-sig:

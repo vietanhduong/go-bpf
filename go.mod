@@ -1,3 +1,3 @@
-module github.com/iovisor/gobpf
+module github.com/vietanhduong/gobpf
 
-go 1.15
+go 1.18

@@ -19,51 +19,20 @@ import "C"
 
 import (
 	"encoding/binary"
-	"sync"
+	"runtime/cgo"
 	"unsafe"
 )
 
 type (
-	ReceiveCallback func([]byte)
-	LostCallback    func(uint64)
+	RawCb  func(cookie interface{}, raw []byte, size int32)
+	LostCb func(cookie interface{}, lost uint64)
 )
 
-type callbackData struct {
-	recvFn ReceiveCallback
-	lostFn LostCallback
-}
-
-var (
-	byteOrder        binary.ByteOrder
-	callbackRegister = make(map[uint64]*callbackData)
-	callbackIndex    uint64
-	mu               sync.Mutex
-)
+var byteOrder binary.ByteOrder
 
 // In lack of binary.HostEndian ...
 func init() {
 	byteOrder = determineHostByteOrder()
-}
-
-func registerCallback(data *callbackData) uint64 {
-	mu.Lock()
-	defer mu.Unlock()
-	callbackIndex++
-	for callbackRegister[callbackIndex] != nil {
-		callbackIndex++
-	}
-	callbackRegister[callbackIndex] = data
-	return callbackIndex
-}
-
-func unregisterCallback(i uint64) {
-	mu.Lock()
-	defer mu.Unlock()
-	delete(callbackRegister, i)
-}
-
-func lookupCallback(i uint64) *callbackData {
-	return callbackRegister[i]
 }
 
 // GetHostByteOrder returns the current byte-order.
@@ -91,14 +60,18 @@ func determineHostByteOrder() binary.ByteOrder {
 //
 //export rawCallback
 func rawCallback(cbCookie unsafe.Pointer, raw unsafe.Pointer, rawSize C.int) {
-	callbackData := lookupCallback(uint64(uintptr(cbCookie)))
-	callbackData.recvFn(C.GoBytes(raw, rawSize))
+	handler := *(*cgo.Handle)(cbCookie)
+	cb := handler.Value().(*callback)
+	if cb != nil && cb.raw != nil {
+		cb.raw(cb.cookie, C.GoBytes(raw, rawSize), int32(rawSize))
+	}
 }
 
 //export lostCallback
 func lostCallback(cbCookie unsafe.Pointer, lost C.uint64_t) {
-	callbackData := lookupCallback(uint64(uintptr(cbCookie)))
-	if callbackData.lostFn != nil {
-		callbackData.lostFn(uint64(lost))
+	handler := *(*cgo.Handle)(cbCookie)
+	cb := handler.Value().(*callback)
+	if cb != nil && cb.lost != nil {
+		cb.lost(cb.cookie, uint64(lost))
 	}
 }

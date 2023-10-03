@@ -3,15 +3,17 @@ package bcc
 import (
 	"fmt"
 	"log"
+	"runtime/cgo"
 	"time"
 	"unsafe"
 
-	"github.com/iovisor/gobpf/pkg/cpuonline"
+	"github.com/vietanhduong/gobpf/pkg/cpuonline"
 )
 
 /*
 #cgo CFLAGS: -I/usr/include/bcc/compat
 #cgo LDFLAGS: -lbcc
+#include <stdlib.h>
 #include <bcc/bcc_common.h>
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -26,23 +28,26 @@ extern void rawCallback(void*, void*, int);
 extern void lostCallback(void*, uint64_t);
 
 struct epoll_event create_ptr_event(int event_type, void* ptr) {
-  struct epoll_event event = {};
-  event.events = event_type;
+  struct epoll_event event = { .events = event_type };
   event.data.ptr = ptr;
   return event;
 }
 
-void* get_event_data_ptr(struct epoll_event event) {
-  return event.data.ptr;
-}
+void* get_event_data_ptr(struct epoll_event event) { return event.data.ptr; }
 */
 import "C"
+
+type callback struct {
+	raw    RawCb
+	lost   LostCb
+	cookie interface{}
+}
 
 type PerfBuffer struct {
 	table    *Table
 	epfd     C.int
 	readers  map[int]*C.struct_perf_reader
-	cbIdx    uint64
+	handler  cgo.Handle
 	epEvents []C.struct_epoll_event
 }
 
@@ -50,7 +55,6 @@ func CreatePerfBuffer(table *Table) *PerfBuffer {
 	return &PerfBuffer{
 		table:   table,
 		epfd:    -1,
-		cbIdx:   0,
 		readers: make(map[int]*C.struct_perf_reader),
 	}
 }
@@ -59,7 +63,7 @@ func (perf *PerfBuffer) Close() error {
 	return perf.CloseAllCpu()
 }
 
-func (perf *PerfBuffer) OpenAllCpu(recv ReceiveCallback, lost LostCallback, pageCnt int) error {
+func (perf *PerfBuffer) OpenAllCpu(cookie interface{}, rawCb RawCb, lostCb LostCb, pageCnt int) error {
 	if len(perf.readers) != 0 || perf.epfd != -1 {
 		return fmt.Errorf("perviously opened perf buffer not cleaned")
 	}
@@ -69,22 +73,23 @@ func (perf *PerfBuffer) OpenAllCpu(recv ReceiveCallback, lost LostCallback, page
 		return fmt.Errorf("get online cpu: %v", err)
 	}
 
+	perf.handler = cgo.NewHandle(&callback{
+		raw:    rawCb,
+		lost:   lostCb,
+		cookie: cookie,
+	})
+
 	perf.epEvents = make([]C.struct_epoll_event, len(cpus))
 	perf.epfd = C.epoll_create1(C.EPOLL_CLOEXEC)
 
-	perf.cbIdx = registerCallback(&callbackData{
-		recvFn: recv,
-		lostFn: lost,
-	})
-
 	for _, cpu := range cpus {
-		opts := C.struct_bcc_perf_buffer_opts{
+		opts := &C.struct_bcc_perf_buffer_opts{
 			pid:           -1,
 			cpu:           C.int(cpu),
 			wakeup_events: 1,
 		}
 
-		if err := perf.openOnCpu(recv, lost, pageCnt, opts); err != nil {
+		if err := perf.openOnCpu(pageCnt, opts); err != nil {
 			_ = perf.CloseAllCpu()
 			return err
 		}
@@ -94,6 +99,8 @@ func (perf *PerfBuffer) OpenAllCpu(recv ReceiveCallback, lost LostCallback, page
 
 func (perf *PerfBuffer) CloseAllCpu() error {
 	var errStr string
+	perf.handler.Delete()
+
 	if int(perf.epfd) >= 0 {
 		_, err := C.close(perf.epfd)
 		perf.epfd = -1
@@ -108,9 +115,6 @@ func (perf *PerfBuffer) CloseAllCpu() error {
 			errStr += fmt.Sprintf("cpu %d: %v\n", cpu, err)
 		}
 	}
-
-	unregisterCallback(perf.cbIdx)
-	perf.cbIdx = 0
 
 	if errStr != "" {
 		return fmt.Errorf("%s", errStr)
@@ -135,17 +139,7 @@ func (perf *PerfBuffer) Poll(timeout time.Duration) int {
 	return int(cnt)
 }
 
-func (perf *PerfBuffer) Consume() int {
-	if perf.epfd < 0 {
-		return -1
-	}
-	for _, reader := range perf.readers {
-		C.perf_reader_event_read(reader)
-	}
-	return 0
-}
-
-func (perf *PerfBuffer) openOnCpu(recv ReceiveCallback, lost LostCallback, pageCnt int, opts C.struct_bcc_perf_buffer_opts) error {
+func (perf *PerfBuffer) openOnCpu(pageCnt int, opts *C.struct_bcc_perf_buffer_opts) error {
 	if _, ok := perf.readers[int(opts.cpu)]; ok {
 		return fmt.Errorf("perf buffer already open on CPU %d", opts.cpu)
 	}
@@ -153,12 +147,15 @@ func (perf *PerfBuffer) openOnCpu(recv ReceiveCallback, lost LostCallback, pageC
 		return fmt.Errorf("pageCnt must be a power of 2: %d", pageCnt)
 	}
 
-	pageCntC := C.int(pageCnt)
 	reader, err := C.bpf_open_perf_buffer_opts(
+		// Raw callback
 		(C.perf_reader_raw_cb)(unsafe.Pointer(C.rawCallback)),
+		// Lost callback
 		(C.perf_reader_lost_cb)(unsafe.Pointer(C.lostCallback)),
-		unsafe.Pointer(uintptr(perf.cbIdx)),
-		pageCntC, &opts)
+		// Callback Cookie
+		unsafe.Pointer(&perf.handler),
+		C.int(pageCnt), opts,
+	)
 	if reader == nil {
 		return fmt.Errorf("unable to open perf buffer: %v", err)
 	}

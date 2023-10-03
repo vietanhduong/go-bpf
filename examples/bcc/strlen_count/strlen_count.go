@@ -20,7 +20,7 @@ import (
 	"os/signal"
 	"regexp"
 
-	bpf "github.com/iovisor/gobpf/bcc"
+	bpf "github.com/vietanhduong/gobpf/bcc"
 )
 
 import "C"

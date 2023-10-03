@@ -15,13 +15,13 @@ where objects are shared via Unix domain sockets.
 ## Different pinning options
 
 `C.bpf_map_def.pinning` (defined in
-[bpf.h](https://github.com/iovisor/gobpf/blob/446e57e0e24e/elf/include/bpf.h#L616))
+[bpf.h](https://github.com/vietanhduong/gobpf/blob/446e57e0e24e/elf/include/bpf.h#L616))
 can be set to one the following pinning options.
 
-* `PIN_NONE` : object is not pinned
-* `PIN_OBJECT_NS` : pinning that is local to an object (to-be-implemented)
-* `PIN_GLOBAL_NS` : pinning with a global namespace under e.g. `/sys/fs/bpf/ns1/globals`
-* `PIN_CUSTOM_NS` : pinning with a custom path given as section parameter
+- `PIN_NONE` : object is not pinned
+- `PIN_OBJECT_NS` : pinning that is local to an object (to-be-implemented)
+- `PIN_GLOBAL_NS` : pinning with a global namespace under e.g. `/sys/fs/bpf/ns1/globals`
+- `PIN_CUSTOM_NS` : pinning with a custom path given as section parameter
 
 ### Pinning with `PIN_CUSTOM_NS`
 
@@ -30,6 +30,7 @@ an additional path must be set in the `elf.SectionParams.PinPath` parameter
 to `Load()`. For example:
 
 (C source file for an ELF object)
+
 ```
 struct bpf_map_def SEC("maps/dummy_array_custom") dummy_array_custom = {
 	.type = BPF_MAP_TYPE_ARRAY,
@@ -41,6 +42,7 @@ struct bpf_map_def SEC("maps/dummy_array_custom") dummy_array_custom = {
 ```
 
 (Go source file that actually uses the ELF object)
+
 ```
 b := elf.NewModule(customELFFileName)
 var secParams = map[string]elf.SectionParams{

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/iovisor/gobpf/pkg/tracepipe"
+	"github.com/vietanhduong/gobpf/pkg/tracepipe"
 )
 
 func main() {

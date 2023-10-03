@@ -9,8 +9,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/iovisor/gobpf/bcc"
-	bpf "github.com/iovisor/gobpf/bcc"
+	"github.com/vietanhduong/gobpf/bcc"
+	bpf "github.com/vietanhduong/gobpf/bcc"
 )
 
 /*
@@ -58,6 +58,12 @@ int do_perf_event(struct bpf_perf_event_data *ctx) {
 }
 `
 
+type key struct {
+	pid           uint32
+	userStackId   int32
+	kernelStackId int32
+}
+
 func pow(x int) int {
 	power := 1
 	for power < x {
@@ -98,13 +104,21 @@ func main() {
 		sleep = 30
 	}
 
-	aggregate := func() []*C.struct_key_t {
-		var stacks []*C.struct_key_t
+	tcb := &testCb{}
+
+	aggregate := func() []*key {
+		var stacks []*key
 		pageCnt := IntRoudUpToPow2(IntRoundUpAndDivide(1024*1024, os.Getpagesize()))
 
-		err := m.OpenPerfBuffer("histogram", func(b []byte) {
-			event := (*C.struct_key_t)(unsafe.Pointer(&b[0]))
-			stacks = append(stacks, event)
+		err := m.OpenPerfBuffer("histogram", tcb, func(cookie interface{}, raw []byte, size int32) {
+			stack := (*key)(unsafe.Pointer(&raw[0]))
+			if stack.pid == uint32(pid) {
+				t, ok := cookie.(*testCb)
+				if ok {
+					t.counter++
+				}
+				stacks = append(stacks, stack)
+			}
 		}, nil, pageCnt)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
@@ -114,6 +128,7 @@ func main() {
 		done := time.After(time.Duration(sleep) * time.Second)
 		<-done
 		m.PollPerfBuffer("histogram", 0)
+		log.Printf("Total stack: %v", tcb.counter)
 		return stacks
 	}
 	stacks := aggregate()
@@ -124,19 +139,16 @@ func main() {
 
 	all := make(map[string]int)
 	for _, stack := range stacks {
-		if stack.pid != C.uint32_t(pid) {
-			continue
-		}
 		var symbols []string
-		if stack.user_stack_id > 0 {
-			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
+		if stack.userStackId > 0 {
+			addrs := stackTable.GetStackAddr(int(stack.userStackId), true)
 			for _, addr := range addrs {
 				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(pid, addr))
 			}
 		}
 
-		if stack.kernel_stack_id > 0 {
-			addrs := stackTable.GetStackAddr(int(stack.user_stack_id), true)
+		if stack.kernelStackId > 0 {
+			addrs := stackTable.GetStackAddr(int(stack.kernelStackId), true)
 			for _, addr := range addrs {
 				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(-1, addr))
 			}
@@ -162,4 +174,14 @@ func IntRoudUpToPow2(x int) int {
 		power *= 2
 	}
 	return power
+}
+
+type testCb struct {
+	counter int
+}
+
+func (t *testCb) Raw() bpf.RawCb {
+	log.Printf("received")
+	return func(cookie interface{}, raw []byte, size int32) {
+	}
 }

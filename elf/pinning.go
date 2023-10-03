@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package elf
@@ -9,7 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/iovisor/gobpf/pkg/bpffs"
+	"github.com/vietanhduong/gobpf/pkg/bpffs"
 )
 
 /*
@@ -55,7 +56,7 @@ func pinObject(fd int, pinPath string) error {
 	if !mounted {
 		return fmt.Errorf("bpf fs not mounted at %q", BPFFSPath)
 	}
-	err = os.MkdirAll(filepath.Dir(pinPath), 0755)
+	err = os.MkdirAll(filepath.Dir(pinPath), 0o755)
 	if err != nil {
 		return fmt.Errorf("error creating directory %q: %v", filepath.Dir(pinPath), err)
 	}

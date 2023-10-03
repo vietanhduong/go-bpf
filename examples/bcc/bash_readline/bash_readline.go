@@ -22,7 +22,7 @@ import (
 	"os/signal"
 	"time"
 
-	bpf "github.com/iovisor/gobpf/bcc"
+	bpf "github.com/vietanhduong/gobpf/bcc"
 )
 
 const source string = `
@@ -70,9 +70,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	onRecv := func(data []byte) {
+	onRecv := func(_ interface{}, raw []byte, _ int32) {
 		var event readlineEvent
-		err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
+		err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
 		if err != nil {
 			fmt.Printf("failed to decode received data: %s\n", err)
 			return
@@ -82,7 +82,7 @@ func main() {
 		fmt.Printf("%10d\t%s\n", event.Pid, comm)
 	}
 
-	err = m.OpenPerfBuffer("readline_events", onRecv, nil, 0)
+	err = m.OpenPerfBuffer("readline_events", nil, onRecv, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
