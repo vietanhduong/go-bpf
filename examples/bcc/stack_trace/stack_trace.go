@@ -9,8 +9,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/vietanhduong/gobpf/bcc"
-	bpf "github.com/vietanhduong/gobpf/bcc"
+	"github.com/vietanhduong/go-bpf/bcc"
+	bpf "github.com/vietanhduong/go-bpf/bcc"
 )
 
 /*

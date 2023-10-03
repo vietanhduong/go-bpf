@@ -24,7 +24,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/vietanhduong/gobpf/pkg/cpuonline"
+	"github.com/vietanhduong/go-bpf/pkg/cpuonline"
 )
 
 /*

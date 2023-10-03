@@ -28,10 +28,10 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/vietanhduong/gobpf/bcc"
-	"github.com/vietanhduong/gobpf/elf"
-	"github.com/vietanhduong/gobpf/pkg/bpffs"
-	"github.com/vietanhduong/gobpf/pkg/progtestrun"
+	"github.com/vietanhduong/go-bpf/bcc"
+	"github.com/vietanhduong/go-bpf/elf"
+	"github.com/vietanhduong/go-bpf/pkg/bpffs"
+	"github.com/vietanhduong/go-bpf/pkg/progtestrun"
 )
 
 // redefine flags here as cgo in test is not supported

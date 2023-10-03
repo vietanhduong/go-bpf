@@ -3,7 +3,7 @@ package cpupossible
 import (
 	"io/ioutil"
 
-	"github.com/vietanhduong/gobpf/pkg/cpurange"
+	"github.com/vietanhduong/go-bpf/pkg/cpurange"
 )
 
 const cpuPossible = "/sys/devices/system/cpu/possible"

@@ -24,7 +24,7 @@ import (
 	"time"
 	"unsafe"
 
-	bpf "github.com/vietanhduong/gobpf/bcc"
+	bpf "github.com/vietanhduong/go-bpf/bcc"
 )
 
 import "C"

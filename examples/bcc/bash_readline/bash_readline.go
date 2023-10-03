@@ -22,7 +22,7 @@ import (
 	"os/signal"
 	"time"
 
-	bpf "github.com/vietanhduong/gobpf/bcc"
+	bpf "github.com/vietanhduong/go-bpf/bcc"
 )
 
 const source string = `

@@ -32,10 +32,10 @@ import (
 	"syscall"
 	"unsafe"
 
-	_ "github.com/vietanhduong/gobpf/elf/include"
-	_ "github.com/vietanhduong/gobpf/elf/include/uapi/linux"
-	"github.com/vietanhduong/gobpf/pkg/bpffs"
-	"github.com/vietanhduong/gobpf/pkg/cpuonline"
+	_ "github.com/vietanhduong/go-bpf/elf/include"
+	_ "github.com/vietanhduong/go-bpf/elf/include/uapi/linux"
+	"github.com/vietanhduong/go-bpf/pkg/bpffs"
+	"github.com/vietanhduong/go-bpf/pkg/cpuonline"
 )
 
 /*

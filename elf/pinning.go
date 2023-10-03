@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/vietanhduong/gobpf/pkg/bpffs"
+	"github.com/vietanhduong/go-bpf/pkg/bpffs"
 )
 
 /*
