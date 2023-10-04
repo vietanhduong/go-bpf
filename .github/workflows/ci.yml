@@ -4,8 +4,7 @@ concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
+permissions: read-all
 
 on:
   push:
@@ -20,7 +19,7 @@ jobs:
       image: ghcr.io/vietanhduong/go-bpf-debug:202310041102
       credentials:
         username: ${{ github.actor }}
-        password: ${{ secrets.github_token }}
+        password: ${{ github.token }}
       options: --privileged
     steps:
       - name: Checkout code
