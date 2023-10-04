@@ -1,0 +1,34 @@
+# Because BCC is required across all images, so I decided
+# to bring it to the base image.
+
+FROM ubuntu:20.04 as builder
+
+RUN apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt install -y zip bison build-essential cmake flex git libedit-dev \
+  libllvm12 llvm-12-dev libclang-12-dev python zlib1g-dev libelf-dev libfl-dev python3-setuptools \
+  liblzma-dev arping netperf iperf
+
+WORKDIR /bcc
+
+ARG BCC_REF=ec49363e2e9daec026ee6cae4c5fc316f8fab0ff
+
+
+# DO NOT DOWNLOAD THE SOURCE FROM ARCHIVE. 
+# This can lead to  the LIBBCC_VERSION_GEQ macro 
+# in gobpf/bcc/module.go can detech the true version of bcc lib
+RUN git clone https://github.com/iovisor/bcc.git . && \
+  git checkout ${BCC_REF}
+
+# Build and install BCC
+WORKDIR /bcc/build
+
+RUN cmake .. \
+  -DENABLE_EXAMPLES=OFF \
+  -DENABLE_MAN=OFF \
+  -DENABLE_TESTS=OFF \
+  # Consider to increase number of process (-j). 
+  # In some case, this can lets the process stuck forever.
+  && make \
+  && make install
+
+WORKDIR /
