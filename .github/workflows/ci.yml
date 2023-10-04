@@ -18,6 +18,9 @@ jobs:
     runs-on: ubuntu-20.04
     container:
       image: ghcr.io/vietanhduong/go-bpf-debug:202310041102
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.github_token }}
       options: --privileged
     steps:
       - name: Checkout code
