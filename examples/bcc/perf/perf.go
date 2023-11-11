@@ -83,7 +83,10 @@ type chownEvent struct {
 }
 
 func main() {
-	m := bpf.NewModule(source, []string{})
+	m, err := bpf.NewModule(source, []string{})
+	if err != nil {
+		panic(err)
+	}
 	defer m.Close()
 
 	chownKprobe, err := m.LoadKprobe("kprobe__sys_fchownat")

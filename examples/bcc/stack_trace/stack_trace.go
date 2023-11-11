@@ -83,7 +83,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := bcc.NewModule(source, []string{})
+	m, err := bcc.NewModule(source, []string{})
+	if err != nil {
+		panic(err)
+	}
 	defer m.Close()
 
 	fd, err := m.LoadPerfEvent("do_perf_event")

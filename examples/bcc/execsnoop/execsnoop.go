@@ -195,7 +195,10 @@ func run() {
 
 	flag.Parse()
 
-	m := bpf.NewModule(strings.Replace(source, "MAX_ARGS", strconv.FormatUint(*maxArgs, 10), -1), []string{})
+	m, err := bpf.NewModule(strings.Replace(source, "MAX_ARGS", strconv.FormatUint(*maxArgs, 10), -1), []string{})
+	if err != nil {
+		panic(err)
+	}
 	defer m.Close()
 
 	fnName := bpf.GetSyscallFnName("execve")

@@ -55,7 +55,10 @@ type readlineEvent struct {
 }
 
 func main() {
-	m := bpf.NewModule(source, []string{})
+	m, err := bpf.NewModule(source, []string{})
+	if err != nil {
+		panic(err)
+	}
 	defer m.Close()
 
 	readlineUretprobe, err := m.LoadUprobe("get_return_value")

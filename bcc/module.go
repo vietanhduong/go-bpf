@@ -141,11 +141,15 @@ func newModule(code string, cflags []string) *Module {
 
 // NewModule asynchronously compiles the code, generates a new BPF
 // module and returns it.
-func NewModule(code string, cflags []string) *Module {
+func NewModule(code string, cflags []string) (*Module, error) {
 	bpfInitOnce.Do(bpfInit)
 	ch := make(chan *Module)
 	compileCh <- compileRequest{code, cflags, ch}
-	return <-ch
+	mod := <-ch
+	if mod == nil {
+		return nil, fmt.Errorf("compile BPF code might be failed")
+	}
+	return mod, nil
 }
 
 func compile() {

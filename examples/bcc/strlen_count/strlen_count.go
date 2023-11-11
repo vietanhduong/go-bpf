@@ -49,7 +49,10 @@ var ansiEscape = regexp.MustCompile(`[[:cntrl:]]`)
 func main() {
 	pid := flag.Int("pid", -1, "attach to pid, default is all processes")
 	flag.Parse()
-	m := bpf.NewModule(source, []string{})
+	m, err := bpf.NewModule(source, []string{})
+	if err != nil {
+		panic(err)
+	}
 	defer m.Close()
 
 	strlenUprobe, err := m.LoadUprobe("count")

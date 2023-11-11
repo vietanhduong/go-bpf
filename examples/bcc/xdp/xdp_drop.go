@@ -126,11 +126,14 @@ func main() {
 	ret := "XDP_DROP"
 	ctxtype := "xdp_md"
 
-	module := bpf.NewModule(source, []string{
+	module, err := bpf.NewModule(source, []string{
 		"-w",
 		"-DRETURNCODE=" + ret,
 		"-DCTXTYPE=" + ctxtype,
 	})
+	if err != nil {
+		panic(err)
+	}
 	defer module.Close()
 
 	fn, err := module.Load("xdp_prog1", C.BPF_PROG_TYPE_XDP, 1, 65536)
