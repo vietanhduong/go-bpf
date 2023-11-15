@@ -62,9 +62,23 @@ func (s *Symbolizer) SymbolOrAddrIfUnknown(pid int, addr uintptr) string {
 	}
 
 	if module := C.GoString(symbol.module); module != "" {
-		return s.formatModuleName(C.GoString(symbol.module), uintptr(symbol.offset))
+		return formatModuleName(C.GoString(symbol.module), uintptr(symbol.offset))
 	}
-	return s.formatAddress(addr)
+	return formatAddress(addr)
+}
+
+func (s *Symbolizer) ResolveName(pid int, module, name string) (uintptr, error) {
+	cmodule := C.CString(module)
+	defer C.free(unsafe.Pointer(cmodule))
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
+	var addr C.ulong
+	ret := C.bcc_symcache_resolve_name(s.getBCCSymbolCache(pid), cmodule, cname, &addr)
+	if ret < 0 {
+		return 0, fmt.Errorf("unable to resolve symbol name %q", name)
+	}
+	return uintptr(addr), nil
 }
 
 func (s *Symbolizer) ReleasePidSymCache(pid int) {
@@ -86,11 +100,11 @@ func (s *Symbolizer) getBCCSymbolCache(pid int) unsafe.Pointer {
 	return cache
 }
 
-func (s *Symbolizer) formatAddress(addr uintptr) string {
+func formatAddress(addr uintptr) string {
 	return fmt.Sprintf("0x%016x", addr)
 }
 
-func (s *Symbolizer) formatModuleName(module string, offset uintptr) string {
+func formatModuleName(module string, offset uintptr) string {
 	return fmt.Sprintf("[m] %s + 0x%08x", module, offset)
 }
 
@@ -122,6 +136,17 @@ type bccSymbolOption struct {
 	checkDebugFileCrc int
 	lazySymbolize     int
 	useSymbolType     uint32
+}
+
+// Ksymname Translate a kernel name into an address. This is the reverse of
+// ksym. Returns -1 when the function name is unknown.
+// TODO(vietanhduong): Implement symnol cache
+func Ksymname(name string) (uint64, error) {
+	addr, err := bccResolveName("", name, -1)
+	if err != nil {
+		return 0, err
+	}
+	return addr, nil
 }
 
 // resolveSymbolPath returns the file and offset to locate symname in module
