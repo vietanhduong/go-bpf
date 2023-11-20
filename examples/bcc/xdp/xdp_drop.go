@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 
 	bpf "github.com/vietanhduong/go-bpf/bcc"
 )
@@ -126,17 +127,17 @@ func main() {
 	ret := "XDP_DROP"
 	ctxtype := "xdp_md"
 
-	module, err := bpf.NewModule(source, []string{
+	module, err := bpf.NewModule(source, bpf.WithCFlags(
 		"-w",
-		"-DRETURNCODE=" + ret,
-		"-DCTXTYPE=" + ctxtype,
-	})
+		"-DRETURNCODE="+ret,
+		"-DCTXTYPE="+ctxtype,
+	))
 	if err != nil {
 		panic(err)
 	}
 	defer module.Close()
 
-	fn, err := module.Load("xdp_prog1", C.BPF_PROG_TYPE_XDP, 1, 65536)
+	fn, err := module.Load("xdp_prog1", C.BPF_PROG_TYPE_XDP)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
 		os.Exit(1)
@@ -157,7 +158,7 @@ func main() {
 	fmt.Println("Dropping packets, hit CTRL+C to stop")
 
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, os.Kill)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
 	dropcnt := bpf.NewTable(module.TableId("dropcnt"), module)
 

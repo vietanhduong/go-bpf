@@ -195,7 +195,7 @@ func run() {
 
 	flag.Parse()
 
-	m, err := bpf.NewModule(strings.Replace(source, "MAX_ARGS", strconv.FormatUint(*maxArgs, 10), -1), []string{})
+	m, err := bpf.NewModule(strings.Replace(source, "MAX_ARGS", strconv.FormatUint(*maxArgs, 10), -1))
 	if err != nil {
 		panic(err)
 	}

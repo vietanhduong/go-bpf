@@ -55,7 +55,7 @@ type readlineEvent struct {
 }
 
 func main() {
-	m, err := bpf.NewModule(source, []string{})
+	m, err := bpf.NewModule(source)
 	if err != nil {
 		panic(err)
 	}

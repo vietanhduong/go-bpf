@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -83,11 +84,12 @@ type chownEvent struct {
 }
 
 func main() {
-	m, err := bpf.NewModule(source, []string{})
+	m, err := bpf.NewModule(source)
 	if err != nil {
 		panic(err)
 	}
 	defer m.Close()
+	log.Printf("Init BPF Module has been completed!")
 
 	chownKprobe, err := m.LoadKprobe("kprobe__sys_fchownat")
 	if err != nil {
