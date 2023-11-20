@@ -83,7 +83,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	m, err := bcc.NewModule(source, []string{})
+	m, err := bcc.NewModule(source)
 	if err != nil {
 		panic(err)
 	}

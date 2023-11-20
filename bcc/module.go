@@ -16,10 +16,9 @@ package bcc
 
 import (
 	"fmt"
+	"log"
 	"regexp"
-	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -61,6 +60,8 @@ import "C"
 
 // Module type
 type Module struct {
+	*ModuleOptions
+
 	p              unsafe.Pointer
 	funcs          map[string]int
 	kprobes        map[string]int
@@ -93,41 +94,25 @@ const (
 
 const DEFAULT_PERF_BUFFER_PAGE_CNT = 8
 
-var (
-	defaultCflags []string
-	compileCh     chan compileRequest
-	bpfInitOnce   sync.Once
-)
-
-func bpfInit() {
-	defaultCflags = []string{
-		fmt.Sprintf("-DNUMCPUS=%d", runtime.NumCPU()),
-	}
-	compileCh = make(chan compileRequest)
-	go compile()
-}
-
 // NewModule constructor
-func newModule(code string, cflags []string) *Module {
-	cflagsC := make([]*C.char, len(defaultCflags)+len(cflags))
+func newModule(code string, opts *ModuleOptions) *Module {
+	cflagsC := make([]*C.char, len(opts.CFlags))
 	defer func() {
 		for _, cflag := range cflagsC {
 			C.free(unsafe.Pointer(cflag))
 		}
 	}()
-	for i, cflag := range cflags {
+	for i, cflag := range opts.CFlags {
 		cflagsC[i] = C.CString(cflag)
-	}
-	for i, cflag := range defaultCflags {
-		cflagsC[len(cflags)+i] = C.CString(cflag)
 	}
 	cs := C.CString(code)
 	defer C.free(unsafe.Pointer(cs))
-	c := C.bpf_module_create_c_from_string(cs, 2, (**C.char)(&cflagsC[0]), C.int(len(cflagsC)), (C.bool)(true), nil)
+	c := C.bpf_module_create_c_from_string(cs, C.uint(opts.Debug), (**C.char)(&cflagsC[0]), C.int(len(cflagsC)), (C.bool)(opts.AllowRlimit), nil)
 	if c == nil {
 		return nil
 	}
 	return &Module{
+		ModuleOptions:  opts,
 		p:              c,
 		funcs:          make(map[string]int),
 		kprobes:        make(map[string]int),
@@ -141,22 +126,81 @@ func newModule(code string, cflags []string) *Module {
 
 // NewModule asynchronously compiles the code, generates a new BPF
 // module and returns it.
-func NewModule(code string, cflags []string) (*Module, error) {
-	bpfInitOnce.Do(bpfInit)
-	ch := make(chan *Module)
-	compileCh <- compileRequest{code, cflags, ch}
-	mod := <-ch
-	if mod == nil {
-		return nil, fmt.Errorf("compile BPF code might be failed")
+func NewModule(code string, opt ...ModuleOption) (*Module, error) {
+	opts := DefaultModuleOptions()
+	for _, o := range opt {
+		o(opts)
+	}
+	var mod *Module
+	if mod = newModule(code, opts); mod == nil {
+		return nil, fmt.Errorf("failed to compile BPF module")
+	}
+
+	if err := mod.autoload(); err != nil {
+		return nil, fmt.Errorf("autoload: %w", err)
 	}
 	return mod, nil
 }
 
-func compile() {
-	for {
-		req := <-compileCh
-		req.rspCh <- newModule(req.code, req.cflags)
+func (bpf *Module) autoload() error {
+	prefixes := map[string]func(name string) error{
+		"kprobe__": func(name string) error {
+			fd, err := bpf.LoadKprobe(name)
+			if err != nil {
+				return fmt.Errorf("load kprobe %s: %w", name, err)
+			}
+			if err = bpf.AttachKprobe(FixSyscallFnName(name[8:]), fd, -1); err != nil {
+				return fmt.Errorf("attach kprobe: %w", err)
+			}
+			return nil
+		},
+		"kretprobe__": func(name string) error {
+			fd, err := bpf.LoadKprobe(name)
+			if err != nil {
+				return fmt.Errorf("load kprobe %s: %w", name, err)
+			}
+			if err = bpf.AttachKretprobe(FixSyscallFnName(name[11:]), fd, -1); err != nil {
+				return fmt.Errorf("attach kprobe: %w", err)
+			}
+			return nil
+		},
+		"tracepoint__": func(name string) error {
+			fd, err := bpf.LoadTracepoint(name)
+			if err != nil {
+				return fmt.Errorf("load tracepoint %s: %w", name, err)
+			}
+			tp := strings.ReplaceAll(name[len("tracepoint__"):], "__", ":")
+			if err = bpf.AttachTracepoint(tp, fd); err != nil {
+				return fmt.Errorf("attach tracepoint: %w", err)
+			}
+			return nil
+		},
+		"raw_tracepoint__": func(name string) error {
+			fd, err := bpf.LoadRawTracepoint(name)
+			if err != nil {
+				return fmt.Errorf("load raw tracepoint %s: %w", name, err)
+			}
+			tp := name[len("raw_tracepoint__"):]
+			if err = bpf.AttachRawTracepoint(tp, fd); err != nil {
+				return fmt.Errorf("attach raw tracepoint: %w", err)
+			}
+			return nil
+		},
+		// TODO(vietanhduong): implement kfunc__, kretfunc__ and lsm__
 	}
+
+	var i C.ulong
+	for i = 0; i < C.bpf_num_functions(bpf.p); i++ {
+		name := C.GoString(C.bpf_function_name(bpf.p, i))
+		if fn := prefixes[strings.Split(name, "__")[0]+"__"]; fn != nil {
+			if err := fn(name); err != nil {
+				return err
+			} else {
+				log.Printf("Autoload: Loaded function %q", name)
+			}
+		}
+	}
+	return nil
 }
 
 // Close takes care of closing all kprobes opened by this modules and
@@ -204,42 +248,47 @@ func (bpf *Module) GetProgramTag(fd int) (tag uint64, err error) {
 }
 
 // LoadNet loads a program of type BPF_PROG_TYPE_SCHED_ACT.
-func (bpf *Module) LoadNet(name string) (int, error) {
-	return bpf.Load(name, C.BPF_PROG_TYPE_SCHED_ACT, 0, 0)
+func (bpf *Module) LoadNet(name string, opt ...LoadOption) (int, error) {
+	return bpf.Load(name, C.BPF_PROG_TYPE_SCHED_ACT, opt...)
 }
 
 // LoadKprobe loads a program of type BPF_PROG_TYPE_KPROBE.
-func (bpf *Module) LoadKprobe(name string) (int, error) {
-	return bpf.Load(name, C.BPF_PROG_TYPE_KPROBE, 0, 0)
+func (bpf *Module) LoadKprobe(name string, opt ...LoadOption) (int, error) {
+	return bpf.Load(name, C.BPF_PROG_TYPE_KPROBE, opt...)
 }
 
 // LoadTracepoint loads a program of type BPF_PROG_TYPE_TRACEPOINT
-func (bpf *Module) LoadTracepoint(name string) (int, error) {
-	return bpf.Load(name, C.BPF_PROG_TYPE_TRACEPOINT, 0, 0)
+func (bpf *Module) LoadTracepoint(name string, opt ...LoadOption) (int, error) {
+	return bpf.Load(name, C.BPF_PROG_TYPE_TRACEPOINT, opt...)
 }
 
 // LoadRawTracepoint loads a program of type BPF_PROG_TYPE_RAW_TRACEPOINT
-func (bpf *Module) LoadRawTracepoint(name string) (int, error) {
-	return bpf.Load(name, C.BPF_PROG_TYPE_RAW_TRACEPOINT, 0, 0)
+func (bpf *Module) LoadRawTracepoint(name string, opt ...LoadOption) (int, error) {
+	return bpf.Load(name, C.BPF_PROG_TYPE_RAW_TRACEPOINT, opt...)
 }
 
 // LoadPerfEvent loads a program of type BPF_PROG_TYPE_PERF_EVENT
-func (bpf *Module) LoadPerfEvent(name string) (int, error) {
-	return bpf.Load(name, C.BPF_PROG_TYPE_PERF_EVENT, 0, 0)
+func (bpf *Module) LoadPerfEvent(name string, opt ...LoadOption) (int, error) {
+	return bpf.Load(name, C.BPF_PROG_TYPE_PERF_EVENT, opt...)
 }
 
 // LoadUprobe loads a program of type BPF_PROG_TYPE_KPROBE.
-func (bpf *Module) LoadUprobe(name string) (int, error) {
-	return bpf.Load(name, C.BPF_PROG_TYPE_KPROBE, 0, 0)
+func (bpf *Module) LoadUprobe(name string, opt ...LoadOption) (int, error) {
+	return bpf.Load(name, C.BPF_PROG_TYPE_KPROBE, opt...)
 }
 
 // Load a program.
-func (bpf *Module) Load(name string, progType int, logLevel, logSize uint) (int, error) {
+func (bpf *Module) Load(name string, progType int, opt ...LoadOption) (int, error) {
 	fd, ok := bpf.funcs[name]
 	if ok {
 		return fd, nil
 	}
-	fd, err := bpf.load(name, progType, logLevel, logSize)
+
+	opts := DefaultLoadOptions()
+	for _, o := range opt {
+		o(opts)
+	}
+	fd, err := bpf.load(name, progType, opts)
 	if err != nil {
 		return -1, err
 	}
@@ -247,25 +296,35 @@ func (bpf *Module) Load(name string, progType int, logLevel, logSize uint) (int,
 	return fd, nil
 }
 
-func (bpf *Module) load(name string, progType int, logLevel, logSize uint) (int, error) {
-	nameCS := C.CString(name)
-	defer C.free(unsafe.Pointer(nameCS))
-	start := (*C.struct_bpf_insn)(C.bpf_function_start(bpf.p, nameCS))
-	size := C.int(C.bpf_function_size(bpf.p, nameCS))
+func (bpf *Module) load(name string, progType int, opts *LoadOptions) (int, error) {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
+	start := (*C.struct_bpf_insn)(C.bpf_function_start(bpf.p, cname))
+	if start == nil {
+		return -1, fmt.Errorf("bpf unknown program %s", name)
+	}
+
+	var cdevice *C.char
+	if opts.Device != "" {
+		cdevice = C.CString(opts.Device)
+		defer C.free(unsafe.Pointer(&cdevice))
+	}
+
+	var loglevel uint
+	if bpf.Debug&DEBUG_BPF_REGISTER_STATE != 0 {
+		loglevel = 2
+	} else if bpf.Debug&DEBUG_BPF != 0 {
+		loglevel = 1
+	}
+
+	size := C.int(C.bpf_function_size(bpf.p, cname))
 	license := C.bpf_module_license(bpf.p)
 	version := C.bpf_module_kern_version(bpf.p)
-	if start == nil {
-		return -1, fmt.Errorf("Module: unable to find %s", name)
-	}
-	var logBuf []byte
-	var logBufP *C.char
-	if logSize > 0 {
-		logBuf = make([]byte, logSize)
-		logBufP = (*C.char)(unsafe.Pointer(&logBuf[0]))
-	}
-	fd, err := C.bcc_func_load_wrapper(bpf.p, C.int(uint32(progType)), nameCS, start, size, license, version, C.int(logLevel), logBufP, C.uint(len(logBuf)), nil, C.int(-1))
+
+	fd, err := C.bcc_func_load_wrapper(bpf.p, C.int(uint32(progType)), cname, start, size, license, version, C.int(loglevel), nil, 0, cdevice, C.int(opts.AttachType))
 	if fd < 0 {
-		return -1, fmt.Errorf("error loading BPF program: %v", err)
+		return -1, fmt.Errorf("load BPF program: %w", err)
 	}
 	return int(fd), nil
 }
@@ -606,4 +665,24 @@ func GetSyscallPrefix() string {
 		}
 	}
 	return syscallPrefix
+}
+
+var syscallPrefixes = []string{
+	"sys_",
+	"__x64_sys_",
+	"__x32_compat_sys_",
+	"__ia32_compat_sys_",
+	"__arm64_sys_",
+	"__s390x_sys_",
+	"__s390_sys_",
+}
+
+func FixSyscallFnName(name string) string {
+	for _, p := range syscallPrefixes {
+		if strings.HasPrefix(name, p) {
+			return GetSyscallFnName(name[len(p):])
+		}
+	}
+
+	return name
 }
