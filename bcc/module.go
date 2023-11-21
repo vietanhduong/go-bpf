@@ -233,11 +233,11 @@ type ResolveSymbolOptions struct {
 //
 // Example output when both show module and show offset are set:
 //
-//	"start_thread+0x202a0b6d [libpthread-2.24.so]"
+//	"net/http.HandlerFunc.ServeHTTP+0x0000002f [.app]"
 //
 // Example output when both show module and show offset are unset:
 //
-//	"start_thread"
+//	"net/http.HandlerFunc.ServeHTTP"
 func (bpf *Module) ResolveSymbol(pid int, addr uint64, opts ResolveSymbolOptions) string {
 	sym := bpf.GetSymCache(pid).Resolve(addr, !opts.NoDemangle)
 	if sym == nil || sym.Module == "" {
@@ -260,10 +260,21 @@ func (bpf *Module) ResolveSymbol(pid int, addr uint64, opts ResolveSymbolOptions
 	return name + module
 }
 
+// ResolveKernelSymbol translate a kernel memory address into a kernel function name, which
+// is returned. When the show module is set, the module name ("kernel") is also included.
+// When the show offset is set, the instruction offset as a hexadecimal number is also
+// included in the string
+//
+// Example outout when both show module and show offset are set:
+//
+//	"__x64_sys_epoll_pwait+0x00000077 [kernel]"
 func (bpf *Module) ResolveKernelSymbol(addr uint64, opts ResolveSymbolOptions) string {
 	return bpf.ResolveSymbol(-1, addr, opts)
 }
 
+// ResolveKernelSymbolAddr translate a kernel name into address. This is the reverse of
+// ResolveKernelSymbol. This function will return an error if unable to resolve the
+// function name.
 func (bpf *Module) ResolveKernelSymbolAddr(name string) (uint64, error) {
 	return bpf.GetSymCache(-1).ResolveName("", name)
 }
