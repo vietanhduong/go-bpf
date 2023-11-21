@@ -20,6 +20,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -73,7 +74,8 @@ type Module struct {
 	perfEvents     map[string][]int
 	perfBuffers    map[string]*PerfBuffer
 
-	symCaches map[int]*SymbolCache
+	symCacheMu sync.Mutex
+	symCaches  map[int]*SymbolCache
 }
 
 type compileRequest struct {
@@ -208,7 +210,23 @@ func (bpf *Module) autoload() error {
 	return nil
 }
 
+func (bpf *Module) ReleaseSymCache(pid int) {
+	bpf.symCacheMu.Lock()
+	defer bpf.symCacheMu.Unlock()
+	if pid < 0 {
+		pid = -1
+	}
+	cache, ok := bpf.symCaches[pid]
+	if !ok {
+		return
+	}
+	cache.Close()
+	delete(bpf.symCaches, pid)
+}
+
 func (bpf *Module) GetSymCache(pid int) *SymbolCache {
+	bpf.symCacheMu.Lock()
+	defer bpf.symCacheMu.Unlock()
 	if pid < 0 {
 		pid = -1
 	}
@@ -318,10 +336,14 @@ func (bpf *Module) Close() {
 	for perfName := range bpf.perfBuffers {
 		bpf.ClosePerfBuffer(perfName)
 	}
+
+	bpf.symCacheMu.Lock()
 	// close symbol caches
 	for _, cache := range bpf.symCaches {
 		cache.Close()
 	}
+	bpf.symCacheMu.Unlock()
+
 	// close functions
 	for _, fd := range bpf.funcs {
 		syscall.Close(fd)
