@@ -317,22 +317,21 @@ func (table *Table) ClearStackId(stackId int) {
 	}
 }
 
-func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
+func (table *Table) GetStackAddr(stackId int, clear bool) []uint64 {
 	if stackId < 0 {
 		return nil
 	}
 
-	var res []uintptr
-
 	ptr, err := table.GetP(unsafe.Pointer(&stackId))
 	if err != nil {
-		return res
+		return nil
 	}
 
+	var res []uint64
 	stack := (*C.struct_stacktrace_t)(ptr)
 
 	for i := 0; (i < BPF_MAX_STACK_DEPTH) && (stack.ip[i] != 0); i++ {
-		res = append(res, uintptr(stack.ip[i]))
+		res = append(res, uint64(stack.ip[i]))
 	}
 	if clear {
 		table.Remove(unsafe.Pointer(&stackId))
@@ -340,7 +339,7 @@ func (table *Table) GetStackAddr(stackId int, clear bool) []uintptr {
 	return res
 }
 
-func (table *Table) GetAddrSymbol(addr uintptr, pid int) string {
+func (table *Table) GetAddrSymbol(addr uint64, pid int) string {
 	if pid < 0 {
 		pid = -1
 	}

@@ -17,6 +17,7 @@ package bcc
 import (
 	"fmt"
 	"log"
+	"path"
 	"regexp"
 	"strings"
 	"syscall"
@@ -31,6 +32,7 @@ import (
 #cgo LDFLAGS: -lbcc
 
 #include <bcc/bcc_common.h>
+#include <bcc/bcc_syms.h>
 #include <bcc/libbpf.h>
 #include <bcc/bcc_version.h>
 
@@ -70,6 +72,8 @@ type Module struct {
 	rawTracepoints map[string]int
 	perfEvents     map[string][]int
 	perfBuffers    map[string]*PerfBuffer
+
+	symCaches map[int]*SymbolCache
 }
 
 type compileRequest struct {
@@ -121,6 +125,7 @@ func newModule(code string, opts *ModuleOptions) *Module {
 		rawTracepoints: make(map[string]int),
 		perfEvents:     make(map[string][]int),
 		perfBuffers:    make(map[string]*PerfBuffer),
+		symCaches:      make(map[int]*SymbolCache),
 	}
 }
 
@@ -203,22 +208,97 @@ func (bpf *Module) autoload() error {
 	return nil
 }
 
+func (bpf *Module) GetSymCache(pid int) *SymbolCache {
+	if pid < 0 {
+		pid = -1
+	}
+	cache, ok := bpf.symCaches[pid]
+	if !ok {
+		cache = NewSymbolCache(pid)
+		bpf.symCaches[pid] = cache
+	}
+	return cache
+}
+
+type ResolveSymbolOptions struct {
+	ShowOffset bool
+	ShowModule bool
+	NoDemangle bool
+}
+
+// ResolveSymbol Translate a memory address into a function name for a pid, which is returned.
+// When the show module option is set, the module name is also included. When the show offset
+// is set, the instruction offset as a hexadecimal number is also included in the return string.
+// A pid of lss than zero will access the kernel symbol cache.
+//
+// Example output when both show module and show offset are set:
+//
+//	"net/http.HandlerFunc.ServeHTTP+0x0000002f [.app]"
+//
+// Example output when both show module and show offset are unset:
+//
+//	"net/http.HandlerFunc.ServeHTTP"
+func (bpf *Module) ResolveSymbol(pid int, addr uint64, opts ResolveSymbolOptions) string {
+	sym := bpf.GetSymCache(pid).Resolve(addr, !opts.NoDemangle)
+	if sym == nil || sym.Module == "" {
+		return formatAddress(addr)
+	}
+
+	var offset string
+	var module string
+	if sym.Name != "" && opts.ShowOffset {
+		offset = fmt.Sprintf("+0x%08x", sym.Offset)
+	}
+	name := sym.Name
+	if name == "" {
+		name = "<unknown>"
+	}
+	name += offset
+	if sym.Module != "" && opts.ShowModule {
+		module = fmt.Sprintf(" [%s]", path.Base(sym.Module))
+	}
+	return name + module
+}
+
+// ResolveKernelSymbol translate a kernel memory address into a kernel function name, which
+// is returned. When the show module is set, the module name ("kernel") is also included.
+// When the show offset is set, the instruction offset as a hexadecimal number is also
+// included in the string
+//
+// Example outout when both show module and show offset are set:
+//
+//	"__x64_sys_epoll_pwait+0x00000077 [kernel]"
+func (bpf *Module) ResolveKernelSymbol(addr uint64, opts ResolveSymbolOptions) string {
+	return bpf.ResolveSymbol(-1, addr, opts)
+}
+
+// ResolveKernelSymbolAddr translate a kernel name into address. This is the reverse of
+// ResolveKernelSymbol. This function will return an error if unable to resolve the
+// function name.
+func (bpf *Module) ResolveKernelSymbolAddr(name string) (uint64, error) {
+	return bpf.GetSymCache(-1).ResolveName("", name)
+}
+
 // Close takes care of closing all kprobes opened by this modules and
 // destroys the underlying libbpf module.
 func (bpf *Module) Close() {
+	// Destroy BPF module
 	C.bpf_module_destroy(bpf.p)
+	// detach kprobes
 	for k, v := range bpf.kprobes {
 		C.bpf_close_perf_event_fd((C.int)(v))
 		evNameCS := C.CString(k)
 		C.bpf_detach_kprobe(evNameCS)
 		C.free(unsafe.Pointer(evNameCS))
 	}
+	// detach uprobes
 	for k, v := range bpf.uprobes {
 		C.bpf_close_perf_event_fd((C.int)(v))
 		evNameCS := C.CString(k)
 		C.bpf_detach_uprobe(evNameCS)
 		C.free(unsafe.Pointer(evNameCS))
 	}
+	// detach tracepoints
 	for k, v := range bpf.tracepoints {
 		C.bpf_close_perf_event_fd((C.int)(v))
 		parts := strings.SplitN(k, ":", 2)
@@ -228,14 +308,21 @@ func (bpf *Module) Close() {
 		C.free(unsafe.Pointer(tpCategoryCS))
 		C.free(unsafe.Pointer(tpNameCS))
 	}
+	// close perf envents
 	for _, vs := range bpf.perfEvents {
 		for _, v := range vs {
 			C.bpf_close_perf_event_fd((C.int)(v))
 		}
 	}
+	// close perf buffers
 	for perfName := range bpf.perfBuffers {
 		bpf.ClosePerfBuffer(perfName)
 	}
+	// close symbol caches
+	for _, cache := range bpf.symCaches {
+		cache.Close()
+	}
+	// close functions
 	for _, fd := range bpf.funcs {
 		syscall.Close(fd)
 	}
@@ -494,16 +581,16 @@ func (bpf *Module) AttachUprobe(name, symbol string, fd, pid int) error {
 // to the tracer will fail due to limitations around namespace-switching
 // in multi-threaded programs (such as Go programs)
 func (bpf *Module) AttachMatchingUprobes(name, match string, fd, pid int) error {
-	symbols, err := matchUserSymbols(name, match)
+	symbols, err := MatchUserSymbols(name, match)
 	if err != nil {
-		return fmt.Errorf("unable to match symbols: %s", err)
+		return fmt.Errorf("match user symbols: %w", err)
 	}
 	if len(symbols) == 0 {
-		return fmt.Errorf("no symbols matching %s for %s found", match, name)
+		return fmt.Errorf("no symbols matching %q for %s found", match, name)
 	}
 	for _, symbol := range symbols {
-		if err := bpf.AttachUprobe(name, symbol.name, fd, pid); err != nil {
-			return err
+		if err := bpf.AttachUprobe(name, symbol.Name, fd, pid); err != nil {
+			return fmt.Errorf("attach uprobe name=%s function=%s: %w", name, symbol.Name, err)
 		}
 	}
 	return nil
@@ -536,16 +623,16 @@ func (bpf *Module) AttachUretprobe(name, symbol string, fd, pid int) error {
 // to the tracer will fail due to limitations around namespace-switching
 // in multi-threaded programs (such as Go programs)
 func (bpf *Module) AttachMatchingUretprobes(name, match string, fd, pid int) error {
-	symbols, err := matchUserSymbols(name, match)
+	symbols, err := MatchUserSymbols(name, match)
 	if err != nil {
-		return fmt.Errorf("unable to match symbols: %s", err)
+		return fmt.Errorf("match user symbols: %w", err)
 	}
 	if len(symbols) == 0 {
 		return fmt.Errorf("no symbols matching %s for %s found", match, name)
 	}
 	for _, symbol := range symbols {
-		if err := bpf.AttachUretprobe(name, symbol.name, fd, pid); err != nil {
-			return err
+		if err := bpf.AttachUretprobe(name, symbol.Name, fd, pid); err != nil {
+			return fmt.Errorf("attach uretprobe name=%s function=%s: %w", name, symbol.Name, err)
 		}
 	}
 	return nil

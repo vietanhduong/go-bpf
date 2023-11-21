@@ -32,7 +32,7 @@ const source string = `
 #include <linux/bpf_perf_event.h>
 #include <linux/ptrace.h>
 
-const int TOTAL_ENTRIES = 65536; 
+const int TOTAL_ENTRIES = 65536;
 
 struct key_t {
   uint32_t pid;
@@ -126,7 +126,6 @@ func main() {
 	log.Printf("preparing to aggregate stack...")
 
 	stackTable := bcc.NewTable(m.TableId("stack_traces"), m)
-	bccSym := bcc.NewSymbolizer()
 
 	all := make(map[string]int)
 	for _, stack := range stacks {
@@ -134,14 +133,15 @@ func main() {
 		if stack.userStackId > 0 {
 			addrs := stackTable.GetStackAddr(int(stack.userStackId), true)
 			for _, addr := range addrs {
-				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(pid, addr))
+				symbols = append(symbols, m.ResolveSymbol(pid, addr, bcc.ResolveSymbolOptions{ShowOffset: true, ShowModule: true}))
 			}
 		}
 
 		if stack.kernelStackId > 0 {
 			addrs := stackTable.GetStackAddr(int(stack.kernelStackId), true)
 			for _, addr := range addrs {
-				symbols = append(symbols, bccSym.SymbolOrAddrIfUnknown(-1, addr))
+				sym := m.ResolveKernelSymbol(addr, bcc.ResolveSymbolOptions{ShowModule: true, ShowOffset: true})
+				symbols = append(symbols, sym)
 			}
 		}
 

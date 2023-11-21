@@ -12,16 +12,16 @@ import (
 const KernelAddressSpace = 0x00ffffffffffffff
 
 type Symbol struct {
-	Name    string
-	Module  string
-	Address uint64
+	Name   string
+	Module string
+	Offset uint64
 }
 
 func (k *Symbol) String() string {
 	if k == nil {
 		return ""
 	}
-	return fmt.Sprintf("module=%s symbol=%s address=0x%016x", k.Module, k.Name, k.Address)
+	return fmt.Sprintf("module=%s symbol=%s address=0x%016x", k.Module, k.Name, k.Offset)
 }
 
 func LoadProcKallsym() ([]*Symbol, error) {
@@ -51,8 +51,8 @@ func LoadProcKallsymWithCallback(callback func(sym *Symbol)) error {
 			continue
 		}
 
-		sym.Address, _ = strconv.ParseUint(parts[0], 16, 0)
-		if sym.Address == 0 || sym.Address == math.MaxUint64 || sym.Address < KernelAddressSpace {
+		sym.Offset, _ = strconv.ParseUint(parts[0], 16, 0)
+		if sym.Offset == 0 || sym.Offset == math.MaxUint64 || sym.Offset < KernelAddressSpace {
 			continue
 		}
 
