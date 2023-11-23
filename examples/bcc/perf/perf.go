@@ -134,7 +134,7 @@ func main() {
 			return
 		default:
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(5 * time.Second)
 		m.PollPerfBuffer("chown_events", 0)
 	}
 }
@@ -145,11 +145,11 @@ func (cb *callback) RawSample(raw []byte, size int32) {
 	var event chownEvent
 	err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
 	if err != nil {
-		fmt.Printf("failed to decode received data: %s\n", err)
+		log.Printf("failed to decode received data: %s\n", err)
 		return
 	}
 	filename := (*C.char)(unsafe.Pointer(&event.Filename))
-	fmt.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
+	log.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
 		event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
 }
 

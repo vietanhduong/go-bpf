@@ -72,7 +72,7 @@ type Module struct {
 	tracepoints    map[string]int
 	rawTracepoints map[string]int
 	perfEvents     map[string][]int
-	perfBuffers    map[string]*PerfBuffer
+	perfBuffers    map[string]*PerfEvent
 
 	symCacheMu sync.Mutex
 	symCaches  map[int]*SymbolCache
@@ -126,7 +126,7 @@ func newModule(code string, opts *ModuleOptions) *Module {
 		tracepoints:    make(map[string]int),
 		rawTracepoints: make(map[string]int),
 		perfEvents:     make(map[string][]int),
-		perfBuffers:    make(map[string]*PerfBuffer),
+		perfBuffers:    make(map[string]*PerfEvent),
 		symCaches:      make(map[int]*SymbolCache),
 	}
 }
@@ -681,7 +681,7 @@ func (bpf *Module) ClosePerfBuffer(name string) error {
 	return perfBuf.CloseAllCpu()
 }
 
-func (bpf *Module) GetPerfBuffer(name string) *PerfBuffer {
+func (bpf *Module) GetPerfBuffer(name string) *PerfEvent {
 	return bpf.perfBuffers[name]
 }
 
