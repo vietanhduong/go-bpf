@@ -6,3 +6,6 @@ __debugg_*
 /bazel-*
 .bazel-cache
 /external
+
+/examples
+!/examples/**/*.go
