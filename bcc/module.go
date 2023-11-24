@@ -73,6 +73,8 @@ type Module struct {
 	rawTracepoints map[string]int
 	perfEvents     map[string][]int
 	perfBuffers    map[string]*PerfEvent
+	ringManager    *C.struct_ring_buffer
+	ringBuffers    map[string]*RingBuf
 
 	symCacheMu sync.Mutex
 	symCaches  map[int]*SymbolCache
@@ -127,6 +129,7 @@ func newModule(code string, opts *ModuleOptions) *Module {
 		rawTracepoints: make(map[string]int),
 		perfEvents:     make(map[string][]int),
 		perfBuffers:    make(map[string]*PerfEvent),
+		ringBuffers:    make(map[string]*RingBuf),
 		symCaches:      make(map[int]*SymbolCache),
 	}
 }
@@ -347,6 +350,15 @@ func (bpf *Module) Close() {
 	// close functions
 	for _, fd := range bpf.funcs {
 		syscall.Close(fd)
+	}
+
+	// Close ring buf
+	for _, rb := range bpf.ringBuffers {
+		rb.Close()
+	}
+	if bpf.ringManager != nil {
+		C.bpf_free_ringbuf(bpf.ringManager)
+		bpf.ringManager = nil
 	}
 }
 
@@ -660,7 +672,7 @@ func (bpf *Module) AttachMatchingUretprobes(name, match string, fd, pid int) err
 	return nil
 }
 
-func (bpf *Module) OpenPerfBuffer(name string, cb Callback, pageCnt int) error {
+func (bpf *Module) OpenPerfBuffer(name string, rawCb RawSample, lostCb LostSampes, pageCnt int) error {
 	perfBuf := bpf.perfBuffers[name]
 	if perfBuf == nil {
 		perfBuf = CreatePerfBuffer(NewTable(bpf.TableId(name), bpf))
@@ -669,7 +681,7 @@ func (bpf *Module) OpenPerfBuffer(name string, cb Callback, pageCnt int) error {
 	if pageCnt <= 0 {
 		pageCnt = DEFAULT_PERF_BUFFER_PAGE_CNT
 	}
-	return perfBuf.OpenAllCpu(cb, pageCnt)
+	return perfBuf.OpenAllCpu(rawCb, lostCb, pageCnt)
 }
 
 func (bpf *Module) ClosePerfBuffer(name string) error {
@@ -691,6 +703,26 @@ func (bpf *Module) PollPerfBuffer(name string, timeout time.Duration) int {
 		return -1
 	}
 	return perfBuf.Poll(timeout)
+}
+
+func (bpf *Module) OpenRingBuffer(name string, cb RingbufSample) error {
+	rb := bpf.ringBuffers[name]
+	if rb == nil {
+		rb = CreateRingBuf(NewTable(bpf.TableId(name), bpf))
+		bpf.ringBuffers[name] = rb
+	}
+	return rb.OpenRingBuffer(cb)
+}
+
+func (bpf *Module) PollRingBuffer(name string, timeout time.Duration) int {
+	if rb := bpf.ringBuffers[name]; rb != nil {
+		return rb.Poll(timeout)
+	}
+	return -1
+}
+
+func (bpf *Module) GetRingBuffer(name string) *RingBuf {
+	return bpf.ringBuffers[name]
 }
 
 // TableSize returns the number of tables in the module.
