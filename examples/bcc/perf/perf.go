@@ -121,7 +121,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = m.OpenPerfBuffer("chown_events", &callback{}, 0)
+	err = m.OpenPerfBuffer("chown_events", rawSample, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -139,9 +139,7 @@ func main() {
 	}
 }
 
-type callback struct{}
-
-func (cb *callback) RawSample(raw []byte, size int32) {
+func rawSample(raw []byte, size int) {
 	var event chownEvent
 	err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
 	if err != nil {
@@ -152,5 +150,3 @@ func (cb *callback) RawSample(raw []byte, size int32) {
 	log.Printf("uid %d gid %d pid %d called fchownat(2) on %s (return value: %d)\n",
 		event.Uid, event.Gid, event.Pid, C.GoString(filename), event.ReturnValue)
 }
-
-func (cb *callback) LostSamples(uint64) {}

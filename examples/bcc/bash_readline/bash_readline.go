@@ -73,7 +73,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = m.OpenPerfBuffer("readline_events", &callback{}, 0)
+	err = m.OpenPerfBuffer("readline_events", rawSample, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -94,9 +94,7 @@ func main() {
 	}
 }
 
-type callback struct{}
-
-func (cb *callback) RawSample(raw []byte, size int32) {
+func rawSample(raw []byte, size int) {
 	var event readlineEvent
 	err := binary.Read(bytes.NewBuffer(raw), binary.LittleEndian, &event)
 	if err != nil {
@@ -107,5 +105,3 @@ func (cb *callback) RawSample(raw []byte, size int32) {
 	comm := string(event.Str[:bytes.IndexByte(event.Str[:], 0)])
 	fmt.Printf("%10d\t%s\n", event.Pid, comm)
 }
-
-func (cb *callback) LostSamples(uint64) {}

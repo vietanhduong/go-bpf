@@ -110,7 +110,7 @@ func main() {
 		cb := newCb(pid)
 		pageCnt := IntRoudUpToPow2(IntRoundUpAndDivide(1024*1024, os.Getpagesize()))
 
-		err := m.OpenPerfBuffer("histogram", cb, pageCnt)
+		err := m.OpenPerfBuffer("histogram", cb.rawSample, nil, pageCnt)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 			os.Exit(1)
@@ -177,12 +177,10 @@ func newCb(pid int) *stackTraceCb {
 	return &stackTraceCb{pid: pid}
 }
 
-func (t *stackTraceCb) RawSample(raw []byte, size int32) {
+func (t *stackTraceCb) rawSample(raw []byte, size int) {
 	stack := (*key)(unsafe.Pointer(&raw[0]))
 	if stack.pid == uint32(t.pid) {
 		t.counter++
 		t.stacks = append(t.stacks, stack)
 	}
 }
-
-func (t *stackTraceCb) LostSamples(lost uint64) {}

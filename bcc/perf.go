@@ -47,17 +47,13 @@ func (perf *PerfEvent) Close() error {
 	return perf.CloseAllCpu()
 }
 
-func (perf *PerfEvent) OpenAllCpu(cb Callback, pageCnt int) error {
+func (perf *PerfEvent) OpenAllCpu(raw RawSample, lost LostSampes, pageCnt int) error {
 	cpus, err := cpuonline.Get()
 	if err != nil {
 		return fmt.Errorf("get online cpu: %v", err)
 	}
 
-	if cb == nil {
-		cb = &emptyCallback{}
-	}
-
-	perf.handler = cgo.NewHandle(cb)
+	perf.handler = cgo.NewHandle(&perfCallback{raw, lost})
 	runtime.SetFinalizer(perf, (*PerfEvent).Close)
 
 	for _, cpu := range cpus {
@@ -86,6 +82,10 @@ func (perf *PerfEvent) CloseAllCpu() error {
 }
 
 func (perf *PerfEvent) Poll(timeout time.Duration) int {
+	if timeout < -1 {
+		timeout = -1
+	}
+
 	ctimeout := C.int(timeout.Milliseconds())
 
 	var readers []*C.struct_perf_reader

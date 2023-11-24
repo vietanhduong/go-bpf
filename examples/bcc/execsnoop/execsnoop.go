@@ -229,7 +229,7 @@ func run() {
 		os.Exit(1)
 	}
 
-	err = m.OpenPerfBuffer("events", cb, 0)
+	err = m.OpenPerfBuffer("events", cb.rawSample, nil, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
 		os.Exit(1)
@@ -259,7 +259,7 @@ type callback struct {
 	pretty      bool
 }
 
-func (cb *callback) RawSample(raw []byte, size int32) {
+func (cb *callback) rawSample(raw []byte, size int) {
 	out := newOutput(cb.format, cb.pretty, cb.timestamps)
 	out.PrintHeader()
 	args := make(map[uint64][]string)
@@ -334,5 +334,3 @@ func (cb *callback) RawSample(raw []byte, size int32) {
 		delete(args, event.Pid)
 	}
 }
-
-func (cb *callback) LostSamples(uint64) {}

@@ -14,6 +14,9 @@ extern void rawCallback(void*, void*, int);
 // typedef void (*perf_reader_lost_cb)(void *cb_cookie, uint64_t lost);
 extern void lostCallback(void*, uint64_t);
 
+// ringbuf callback
+// typedef int (*ring_buffer_sample_fn)(void *ctx, void *data, size_t size);
+extern int ringbufCallback(void*, void*, size_t);
 */
 import "C"
 
@@ -22,17 +25,16 @@ import (
 	"unsafe"
 )
 
-type Callback interface {
-	RawSample(raw []byte, size int32)
-	LostSamples(lost uint64)
+type (
+	RawSample     func([]byte, int)
+	LostSampes    func(uint64)
+	RingbufSample func([]byte, int)
+)
+
+type perfCallback struct {
+	raw  RawSample
+	lost LostSampes
 }
-
-type emptyCallback struct{}
-
-var _ Callback = (*emptyCallback)(nil)
-
-func (*emptyCallback) RawSample([]byte, int32) {}
-func (*emptyCallback) LostSamples(uint64)      {}
 
 // Gateway function as required with CGO Go >= 1.6
 // "If a C-program wants a function pointer, a gateway function has to
@@ -43,15 +45,24 @@ func (*emptyCallback) LostSamples(uint64)      {}
 //export rawCallback
 func rawCallback(cookie unsafe.Pointer, raw unsafe.Pointer, rawSize C.int) {
 	handler := *(*cgo.Handle)(cookie)
-	if cb, ok := handler.Value().(Callback); ok && cb != nil {
-		cb.RawSample(C.GoBytes(raw, rawSize), int32(rawSize))
+	if cb, ok := handler.Value().(*perfCallback); ok && cb != nil && cb.raw != nil {
+		cb.raw(C.GoBytes(raw, rawSize), int(rawSize))
 	}
 }
 
 //export lostCallback
 func lostCallback(cookie unsafe.Pointer, lost C.uint64_t) {
 	handler := *(*cgo.Handle)(cookie)
-	if cb, ok := handler.Value().(Callback); ok && cb != nil {
-		cb.LostSamples(uint64(lost))
+	if cb, ok := handler.Value().(*perfCallback); ok && cb != nil && cb.lost != nil {
+		cb.lost(uint64(lost))
 	}
+}
+
+//export ringbufCallback
+func ringbufCallback(ctx, data unsafe.Pointer, size C.size_t) C.int {
+	handler := *(*cgo.Handle)(ctx)
+	if cb, ok := handler.Value().(RingbufSample); ok && cb != nil {
+		cb(unsafe.Slice((*byte)(data), int(size)), int(size))
+	}
+	return C.int(0)
 }
