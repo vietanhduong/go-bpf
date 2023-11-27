@@ -353,12 +353,12 @@ func (bpf *Module) Close() {
 	}
 
 	// Close ring buf
-	for _, rb := range bpf.ringBuffers {
-		rb.Close()
-	}
 	if bpf.ringManager != nil {
 		C.bpf_free_ringbuf(bpf.ringManager)
 		bpf.ringManager = nil
+	}
+	for _, rb := range bpf.ringBuffers {
+		rb.Close()
 	}
 }
 
