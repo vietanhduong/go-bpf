@@ -27,13 +27,13 @@ import (
 
 type (
 	RawSample     func([]byte, int)
-	LostSampes    func(uint64)
+	LostSamples   func(uint64)
 	RingbufSample func([]byte, int)
 )
 
 type perfCallback struct {
 	raw  RawSample
-	lost LostSampes
+	lost LostSamples
 }
 
 // Gateway function as required with CGO Go >= 1.6

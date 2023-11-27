@@ -47,7 +47,7 @@ func (perf *PerfEvent) Close() error {
 	return perf.CloseAllCpu()
 }
 
-func (perf *PerfEvent) OpenAllCpu(raw RawSample, lost LostSampes, pageCnt int) error {
+func (perf *PerfEvent) OpenAllCpu(raw RawSample, lost LostSamples, pageCnt int) error {
 	cpus, err := cpuonline.Get()
 	if err != nil {
 		return fmt.Errorf("get online cpu: %v", err)

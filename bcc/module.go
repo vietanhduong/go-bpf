@@ -672,7 +672,7 @@ func (bpf *Module) AttachMatchingUretprobes(name, match string, fd, pid int) err
 	return nil
 }
 
-func (bpf *Module) OpenPerfBuffer(name string, rawCb RawSample, lostCb LostSampes, pageCnt int) error {
+func (bpf *Module) OpenPerfBuffer(name string, rawCb RawSample, lostCb LostSamples, pageCnt int) error {
 	perfBuf := bpf.perfBuffers[name]
 	if perfBuf == nil {
 		perfBuf = CreatePerfBuffer(NewTable(bpf.TableId(name), bpf))
